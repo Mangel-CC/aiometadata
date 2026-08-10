@@ -29,6 +29,56 @@ const { withEpisodeOrder } = require('../utils/episodeOrder');
 
 const logger = consola.withTag('Meta');
 
+// --- anime-dates-api: fecha REAL de streaming (Crunchyroll, via AnimeSchedule.net)
+// por episodio de anime, en vez de la fecha de TV Japon que TMDB/TVDB/MAL/Kitsu
+// terminan exponiendo segun quien edito el dato por ultima vez -- inconsistente entre
+// shows, confirmado en vivo con animes marcados varios episodios atras de lo que ya
+// esta disponible para ver. Solo devuelve algo cuando hay un mapeo AniList univoco
+// para el imdb (single-cour); en cualquier otro caso (pelicula, serie no-anime, sin
+// mapeo, API caida) devuelve null y el llamador conserva la fecha original sin cambios.
+const ANIME_DATES_API_URL = process.env.ANIME_DATES_API_URL || 'http://anime-dates-api:8091';
+const ANIME_DATES_API_TOKEN = process.env.ANIME_DATES_API_TOKEN || '';
+const animeEpisodeDatesCache = new Map(); // imdbId -> { time, value }
+const ANIME_DATES_CACHE_TTL_MS = 15 * 60 * 1000;
+
+// { season, episodes: Map<episodeNumber, { airDate, aired }> } o null si no aplica.
+// `season` es la temporada (numeracion TMDB/TVDB, curada por Fribb) a la que
+// pertenecen esos numeros de episodio -- el llamador debe comparar contra el season
+// que este armando antes de aplicar el override, para no mezclar episodios de una
+// temporada distinta bajo el mismo imdb (shows multi-temporada).
+async function getAnimeEpisodeDates(imdbId) {
+  if (!imdbId || !/^tt\d+$/i.test(imdbId)) return null;
+  const hit = animeEpisodeDatesCache.get(imdbId);
+  if (hit && Date.now() - hit.time < ANIME_DATES_CACHE_TTL_MS) return hit.value;
+  let value = null;
+  try {
+    const params = new URLSearchParams({ imdb: imdbId });
+    if (ANIME_DATES_API_TOKEN) params.set('token', ANIME_DATES_API_TOKEN);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    let res;
+    try {
+      res = await fetch(`${ANIME_DATES_API_URL}/episode-info?${params.toString()}`, { signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.ok && Array.isArray(data.episodes)) {
+        value = {
+          season: data.season || 1,
+          episodes: new Map(data.episodes.map(ep => [ep.episode, { airDate: ep.airDate, aired: ep.aired }]))
+        };
+        logger.info(`[AnimeDates] ${imdbId}: ${data.episodes.length} episodios, ultimo emitido ${data.latestEpisode}`);
+      }
+    }
+  } catch (e) {
+    logger.warn(`[AnimeDates] fallo para ${imdbId}: ${e.message}`);
+  }
+  animeEpisodeDatesCache.set(imdbId, { time: Date.now(), value });
+  return value;
+}
+
 function _markDegraded(meta, degraded) {
   if (degraded && meta && typeof meta === 'object') meta.__degradedFallback = true;
   return meta;
@@ -1750,7 +1800,9 @@ async function buildTmdbSeriesResponse(stremioId, seriesData, language, config, 
       allTmdbSeasonsMapToSameImdb = !!firstResolvedImdbId && resolvedImdbResults.every(id => id && id === firstResolvedImdbId);
     }
     logger.debug(`[TMDB] TMDB seasons: ${validTmdbSeasons.length}, IMDB seasons: ${imdbSeasons.length}, missing from IMDB: ${tmdbSeasonsMissingFromImdb.join(',') || 'none'}`);
-    
+
+    const animeDates = isAnimeContent ? await getAnimeEpisodeDates(imdbId) : null;
+
     // Only fetch IMDB videos if we have resolved IMDB results
     const imdbVideos = resolvedImdbResults.length > 0 
       ? await Promise.all(resolvedImdbResults.map(imdbId => idMapper.getCinemetaVideosForImdbSeries(imdbId)))
@@ -1874,9 +1926,17 @@ async function buildTmdbSeriesResponse(stremioId, seriesData, language, config, 
           episodeId = `tmdb:${tmdbId}:${ep.season_number}:${ep.episode_number}`;
         }
 
-        const releasedAt = ep.air_date
-          ? resolveReleaseTimestamp(ep.air_date, { originCountry: seriesData.origin_country?.[0] })
+        // Fecha real de streaming (Crunchyroll) en vez de la de TV Japon que trae TMDB,
+        // solo cuando animeDates cubre ESTA temporada (evita mezclar con otra temporada
+        // del mismo imdb) y tiene un dato para este numero de episodio puntual.
+        const animeDateOverride = animeDates && animeDates.season === ep.season_number
+          ? animeDates.episodes.get(ep.episode_number)
           : null;
+        const releasedAt = animeDateOverride?.airDate
+          ? new Date(animeDateOverride.airDate)
+          : ep.air_date
+            ? resolveReleaseTimestamp(ep.air_date, { originCountry: seriesData.origin_country?.[0] })
+            : null;
         let thumbnailUrl;
         {
           const isUnaired = !releasedAt || releasedAt.getTime() > nowMs;
@@ -2442,11 +2502,22 @@ async function buildTvdbSeriesResponse(stremioId, tvdbShow, tvdbEpisodes, langua
     
     
     const nowMs = Date.now();
+    const animeDates = isAnime ? await getAnimeEpisodeDates(imdbId) : null;
     videos = await Promise.all(
       episodeList.map(async (episode) => {
-          const releasedAt = episode.aired
-            ? resolveReleaseTimestamp(episode.aired, { originCountry: tvdbShow.originalCountry, airsTime: tvdbShow.airsTime })
+          // Fecha real de streaming (Crunchyroll) en vez de la de TV Japon que trae TVDB.
+          // Solo aplica con numeracion de temporada normal (no config.tvdbSeasonType
+          // 'absolute'): en ese modo episode.number no es el numero dentro de la
+          // temporada, y animeDates.season no va a coincidir con episode.seasonNumber
+          // -- se cae sola al dato original de TVDB, sin necesidad de un chequeo extra.
+          const animeDateOverride = animeDates && animeDates.season === episode.seasonNumber
+            ? animeDates.episodes.get(episode.number)
             : null;
+          const releasedAt = animeDateOverride?.airDate
+            ? new Date(animeDateOverride.airDate)
+            : episode.aired
+              ? resolveReleaseTimestamp(episode.aired, { originCountry: tvdbShow.originalCountry, airsTime: tvdbShow.airsTime })
+              : null;
           let thumbnailUrl;
           {
             const isUnaired = !releasedAt || releasedAt.getTime() > nowMs;
@@ -3037,8 +3108,12 @@ async function buildAnimeResponse(stremioId, malData, language, characterData, e
         }
       }
       
-      // Process episodes with enhancement data        
+      // Process episodes with enhancement data
       const nowMs = Date.now();
+      // MAL/Kitsu ya identifican una unica temporada/cour (a diferencia de TMDB, que
+      // agrupa varias bajo el mismo show): no hace falta comparar contra animeDates.season,
+      // ep.mal_id numera episodios dentro de ESTE anime igual que animeDates.episodes.
+      const animeDates = await getAnimeEpisodeDates(imdbId);
       videos = (episodeData || []).map(ep => {
         let episodeId = `${seriesId}:${ep.mal_id}`;
         if (idProvider === 'kitsu' && kitsuId) {
@@ -3060,9 +3135,12 @@ async function buildAnimeResponse(stremioId, malData, language, characterData, e
         else if (!airDate && tmdbEpisode && key && tmdbEpisode.isFranchiseFallback) {
           logger.debug(`[buildKitsuAnimeResponse] Skipping TMDB air date for Kitsu ${kitsuId} Ep ${ep.mal_id} because mapping is franchise fallback`);
         }
-        const releasedAt = airDate
-          ? resolveReleaseTimestamp(airDate, { originCountry: 'jp' })
-          : null;
+        const animeDateOverride = animeDates?.episodes.get(ep.mal_id);
+        const releasedAt = animeDateOverride?.airDate
+          ? new Date(animeDateOverride.airDate)
+          : airDate
+            ? resolveReleaseTimestamp(airDate, { originCountry: 'jp' })
+            : null;
 
         if (!thumbnailUrl && tmdbEpisode) {
           const tmdbThumbnail = tmdbThumbnailMap.get(key);
@@ -3496,6 +3574,9 @@ async function buildKitsuAnimeResponse(stremioId, kitsuData, genres, includeObje
       }
       
       const nowMs = Date.now();
+      // Igual que en buildAnimeResponse (MAL): Kitsu ya identifica una unica temporada/
+      // cour, ep.number numera episodios dentro de ESTE anime igual que animeDates.episodes.
+      const animeDates = await getAnimeEpisodeDates(imdbId);
       meta.videos = await Promise.all(episodeData.map(async (item) => {
         const ep = item.attributes;
         let episodeId = `${seriesId}:${ep.number}`
@@ -3514,9 +3595,12 @@ async function buildKitsuAnimeResponse(stremioId, kitsuData, genres, includeObje
         else if (!airDate && tmdbEpisode && key && tmdbEpisode.isFranchiseFallback) {
           logger.debug(`[buildKitsuAnimeResponse] Skipping TMDB air date for Kitsu ${kitsuData.id} Ep ${ep.number} because mapping is franchise fallback`);
         }
-        const releasedAt = airDate
-          ? resolveReleaseTimestamp(airDate, { originCountry: 'jp' })
-          : null;
+        const animeDateOverride = animeDates?.episodes.get(ep.number);
+        const releasedAt = animeDateOverride?.airDate
+          ? new Date(animeDateOverride.airDate)
+          : airDate
+            ? resolveReleaseTimestamp(airDate, { originCountry: 'jp' })
+            : null;
 
         if (!thumbnailUrl && tmdbEpisode) {
           const tmdbThumbnail = tmdbThumbnailMap.get(key);
