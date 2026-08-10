@@ -78,6 +78,39 @@ async function getAnimeEpisodeDates(imdbId) {
   return value;
 }
 
+// --- trailer-finder: busca primero un trailer real en español (doblado o
+// subtitulado, verificado contra YouTube) antes de caer al trailer en
+// ingles de TMDB. Solo se activa si el usuario configuro idioma "es*".
+// Falla en silencio (devuelve null) ante cualquier error/timeout, dejando
+// intacto el fallback original de TMDB.
+async function getCustomSpanishTrailer(title, season, mediaType, year) {
+  if (!title) { logger.info(`[TrailerFinder] sin titulo, se omite`); return null; }
+  try {
+    const base = process.env.TRAILER_FINDER_URL || 'http://trailer-finder:8090';
+    const params = new URLSearchParams({ title });
+    if (season) params.set('season', String(season));
+    if (mediaType) params.set('type', String(mediaType));
+    if (year) params.set('year', String(year));
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    let res;
+    logger.info(`[TrailerFinder] pidiendo: ${base}/trailer?${params.toString()}`);
+    try {
+      res = await fetch(`${base}/trailer?${params.toString()}`, { signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!res.ok) { logger.info(`[TrailerFinder] respuesta no-ok: ${res.status}`); return null; }
+    const data = await res.json();
+    logger.info(`[TrailerFinder] respuesta: found=${data.found} tier=${data.tier}`);
+    if (!data.found || !data.ytId) return null;
+    return [{ source: data.ytId, type: 'Trailer', name: data.title || title, ytId: data.ytId, lang: 'es' }];
+  } catch (e) {
+    logger.warn(`[TrailerFinder] fallo: ${e.message}`);
+    return null;
+  }
+}
+
 function _markDegraded(meta, degraded) {
   if (degraded && meta && typeof meta === 'object') meta.__degradedFallback = true;
   return meta;
@@ -1326,7 +1359,12 @@ async function buildImdbSeriesResponse(stremioId, imdbData, enrichmentData = {},
 
         // Intelligent fallback: user language -> English -> all trailers
         const englishTrailers = allTrailers.filter(trailer => trailer.lang === 'en');
-        const finalTrailers = filteredTrailers.length > 0 ? filteredTrailers : (englishTrailers.length > 0 ? englishTrailers : allTrailers);
+        let finalTrailers = filteredTrailers.length > 0 ? filteredTrailers : (englishTrailers.length > 0 ? englishTrailers : allTrailers);
+
+        if (langCode === 'es') {
+          const esTrailer = await getCustomSpanishTrailer(imdbData.title, null, 'series', seriesData.first_air_date?.substring(0, 4));
+          if (esTrailer) finalTrailers = esTrailer;
+        }
 
         imdbData.trailers = finalTrailers;
       }
@@ -1426,7 +1464,12 @@ async function buildImdbMovieResponse(stremioId, imdbData, enrichmentData = {}, 
       const filteredTrailers = allTrailers.filter(trailer => trailer.lang === langCode);
 
       const englishTrailers = allTrailers.filter(trailer => trailer.lang === 'en');
-      const finalTrailers = filteredTrailers.length > 0 ? filteredTrailers : (englishTrailers.length > 0 ? englishTrailers : allTrailers);
+      let finalTrailers = filteredTrailers.length > 0 ? filteredTrailers : (englishTrailers.length > 0 ? englishTrailers : allTrailers);
+
+      if (langCode === 'es') {
+        const esTrailer = await getCustomSpanishTrailer(imdbData.title, null, 'movie', movieData.release_date?.substring(0, 4));
+        if (esTrailer) finalTrailers = esTrailer;
+      }
 
       imdbData.trailers = finalTrailers;
       }
@@ -1567,7 +1610,11 @@ async function buildTmdbMovieResponse(stremioId, movieData, language, config, us
   const englishTrailers = allTrailers.filter(trailer => trailer.lang === 'en');
 
   // Prefer user's language, fallback to English, then all available
-  const finalTrailers = userLangTrailers.length > 0 ? userLangTrailers : (englishTrailers.length > 0 ? englishTrailers : allTrailers);
+  let finalTrailers = userLangTrailers.length > 0 ? userLangTrailers : (englishTrailers.length > 0 ? englishTrailers : allTrailers);
+  if (langCode === 'es') {
+    const esTrailer = await getCustomSpanishTrailer(finalTitle, null, 'movie', movieData.release_date?.substring(0, 4));
+    if (esTrailer) finalTrailers = esTrailer;
+  }
 
   return {
     id: imdbId || stremioId,
@@ -2016,7 +2063,11 @@ async function buildTmdbSeriesResponse(stremioId, seriesData, language, config, 
   const englishTrailers = allTrailers.filter(trailer => trailer.lang === 'en');
 
   // Prefer user's language, fallback to English, then all available
-  const finalTrailers = userLangTrailers.length > 0 ? userLangTrailers : (englishTrailers.length > 0 ? englishTrailers : allTrailers);
+  let finalTrailers = userLangTrailers.length > 0 ? userLangTrailers : (englishTrailers.length > 0 ? englishTrailers : allTrailers);
+  if (langCode === 'es') {
+    const esTrailer = await getCustomSpanishTrailer(finalName, null, 'series', seriesData.first_air_date?.substring(0, 4));
+    if (esTrailer) finalTrailers = esTrailer;
+  }
 
   logger.debug(`[TmdbSeriesMeta] imdbId: ${imdbId}, stremioId: ${stremioId}`);
   const meta = {
@@ -2156,7 +2207,11 @@ async function buildTvdbMovieResponse(stremioId, movieData, language, config, us
   }));
   
   const { trailers: allTrailers } = Utils.parseTvdbTrailers(movieData.trailers, translatedName);
-  const trailers = Utils.pickTrailersByLanguage(allTrailers, langCode3);
+  let trailers = Utils.pickTrailersByLanguage(allTrailers, langCode3);
+  if (language.split('-')[0] === 'es') {
+    const esTrailer = await getCustomSpanishTrailer(translatedName, null, 'movie', movieData.first_release?.date?.substring(0, 4));
+    if (esTrailer) trailers = esTrailer;
+  }
 
   if(!logoUrl && imdbId && await imdb.metahubImageExists(imdbId, 'logo')){
     logoUrl =  imdb.getLogoFromImdb(imdbId);
@@ -2432,7 +2487,11 @@ async function buildTvdbSeriesResponse(stremioId, tvdbShow, tvdbEpisodes, langua
   }));
 
   const { trailers: allTrailers } = Utils.parseTvdbTrailers(tvdbShow.trailers, translatedName);
-  const trailers = Utils.pickTrailersByLanguage(allTrailers, langCode3);
+  let trailers = Utils.pickTrailersByLanguage(allTrailers, langCode3);
+  if (language.split('-')[0] === 'es') {
+    const esTrailer = await getCustomSpanishTrailer(translatedName, null, 'series', tvdbShow.firstAired?.substring(0, 4));
+    if (esTrailer) trailers = esTrailer;
+  }
 
 
 
@@ -3384,6 +3443,29 @@ async function buildKitsuAnimeResponse(stremioId, kitsuData, genres, includeObje
     }
     const imdbRating = (imdbId ? await getImdbRating(imdbId, stremioType) : "N/A") || "N/A";
     const kitsuTitle = Utils.getKitsuLocalizedTitle(kitsuData.attributes.titles, config.language) || kitsuData.attributes.canonicalTitle;
+    // Kitsu como API nunca trae sinopsis en español (siempre en ingles), a diferencia de
+    // TMDB/TVDB que si la traducen en sus propios caminos. mapping.tmdbId ya viene resuelto
+    // (se ve reflejado en _tmdbId de la respuesta final): se reusa para pedirle a TMDB el
+    // overview en español y reemplazar el ingles de Kitsu.
+    let kitsuDescription = kitsuData.attributes.synopsis || kitsuData.attributes.description || '';
+    if (config.language.split('-')[0] === 'es' && mapping?.tmdbId) {
+      try {
+        const tmdbAnimeData = stremioType === 'movie'
+          ? await moviedb.movieInfo({ id: mapping.tmdbId, language: config.language }, config)
+          : await moviedb.tvInfo({ id: mapping.tmdbId, language: config.language }, config);
+        if (tmdbAnimeData?.overview) {
+          kitsuDescription = tmdbAnimeData.overview;
+        }
+      } catch (e) {
+        logger.warn(`[Meta] TMDB overview fallback fallo para kitsu:${kitsuData.id}: ${e.message}`);
+      }
+    }
+    const kitsuLangCode = config.language.split('-')[0];
+    let kitsuTrailers = [];
+    if (kitsuLangCode === 'es') {
+      const esTrailer = await getCustomSpanishTrailer(kitsuTitle, null, stremioType, kitsuData.attributes.startDate?.substring(0, 4));
+      if (esTrailer) kitsuTrailers = esTrailer;
+    }
     const links = [];
     if (imdbId) {
       links.push(Utils.parseImdbLink(imdbRating, imdbId));
@@ -3433,7 +3515,7 @@ async function buildKitsuAnimeResponse(stremioId, kitsuData, genres, includeObje
       imdb_id: imdbId,
       name: kitsuTitle,
       description: Utils.addMetaProviderAttribution(
-        kitsuData.attributes.synopsis || kitsuData.attributes.description || '',
+        kitsuDescription,
         'KITSU',
         config
       ),
@@ -3460,7 +3542,7 @@ async function buildKitsuAnimeResponse(stremioId, kitsuData, genres, includeObje
       landscapePoster: bestLandscapePosterUrl,
       logo: bestLogoUrl,
       links: links,
-      trailers: [],
+      trailers: kitsuTrailers,
       trailerStreams: [],
       director: [],
       writers: [],
