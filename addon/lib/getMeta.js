@@ -1294,6 +1294,24 @@ async function buildImdbSeriesResponse(stremioId, imdbData, enrichmentData = {},
   if (imdbData.description) {
     imdbData.description = Utils.addMetaProviderAttribution(imdbData.description, 'IMDB', config);
   }
+  // imdbData.videos viene de Cinemeta (v3-cinemeta.strem.io), que a su vez saca la fecha
+  // de TVDB/IMDB -- mismo problema de TV Japon vs Crunchyroll que el resto de fuentes.
+  if (isAnime && imdbId && Array.isArray(imdbData.videos)) {
+    const animeDates = await getAnimeEpisodeDates(imdbId);
+    if (animeDates) {
+      const nowMsForAvailability = Date.now();
+      for (const v of imdbData.videos) {
+        if (v.season !== animeDates.season) continue;
+        const override = animeDates.episodes.get(v.episode);
+        if (override?.airDate) {
+          v.released = override.airDate;
+          if (Object.prototype.hasOwnProperty.call(v, 'available')) {
+            v.available = new Date(override.airDate).getTime() <= nowMsForAvailability;
+          }
+        }
+      }
+    }
+  }
   if (tmdbId){
     imdbData.app_extras = imdbData.app_extras || {};
     if(seriesData){
