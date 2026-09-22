@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [3.1.0](https://github.com/cedya77/aiometadata/compare/v3.0.0...v3.1.0) (2026-09-22)
+
+
+### Features
+
+* **collections:** feature two more community designs ([65090e7](https://github.com/cedya77/aiometadata/commit/65090e76e2719eea49089a2ff22f915f2fe8b223))
+* **jellyfin:** list an addon's text-only stream entries after the playable ones ([c0d44e8](https://github.com/cedya77/aiometadata/commit/c0d44e873d2f877f8679a958d28237ec1b465862))
+* **search:** offer a self-hosted LumiereDB as a movie and series search provider ([77c84cb](https://github.com/cedya77/aiometadata/commit/77c84cbfef1e5535d4e3758ff772d736e5ba3650))
+
+
+### Bug Fixes
+
+* **http:** send the addon's calls to itself past the outbound proxy ([d7baa46](https://github.com/cedya77/aiometadata/commit/d7baa46fd153b3117dafbadc27666a291d6205ae))
+* **jellyfin:** give the server address from the instance's public host ([5c3b7bf](https://github.com/cedya77/aiometadata/commit/5c3b7bfcafec4bcb905037f5e834b4355e7a1662))
+* **jellyfin:** name an episode on the dashboard when its series index is not held ([4de2c18](https://github.com/cedya77/aiometadata/commit/4de2c18d8d15ccea8fbba140aab8dd3ed4f4f5f9))
+* **jellyfin:** show the Latest rows unless a configuration turns them off ([24b4fca](https://github.com/cedya77/aiometadata/commit/24b4fca7b3cef53719b87c7d3413693b83416b5f))
+* **jellyfin:** treat an unrecorded catalog length as unknown rather than empty ([5fdae77](https://github.com/cedya77/aiometadata/commit/5fdae77eb26d6c00987fae613beeb23fe1ffae3f))
+* **recommendations:** say why a taste profile could not be built ([039e622](https://github.com/cedya77/aiometadata/commit/039e6229384d34c4e0bc573c26bdf7e0b412266f))
+* **recommendations:** size reply budgets from the share thinking takes ([d383922](https://github.com/cedya77/aiometadata/commit/d383922c8ee1716c02d65e74fbb32333b897a941))
+
 ## [3.0.0](https://github.com/cedya77/aiometadata/compare/v2.17.2...v3.0.0) (2026-09-21)
 
 
