@@ -2536,6 +2536,11 @@ async function buildTvdbSeriesResponse(stremioId, tvdbShow, tvdbEpisodes, langua
     if (poster) seasonPosters[season.number] = poster;
   });
 
+  // Declarado fuera del bloque includeVideos (de donde se calcula, mas abajo) porque el
+  // objeto `meta` que usa esto para el "released" a nivel show se arma DESPUES de que ese
+  // bloque cierra -- declararlo adentro tiraba "animeFirstEpisodeDate is not defined" y
+  // tumbaba TODO el fallback de TVDB (confirmado en vivo, degradaba a un provider peor).
+  let animeFirstEpisodeDate = null;
   if(includeVideos) {
     const seasonToKitsuIdMap = new Map();
     const absoluteToSeasonalMap = new Map();
@@ -2592,7 +2597,7 @@ async function buildTvdbSeriesResponse(stremioId, tvdbShow, tvdbEpisodes, langua
     // episodio de abajo): solo se pisa con la de streaming cuando animeDates corresponde a la
     // temporada 1 -- evita mostrar la fecha del episodio 1 de una temporada 2+ como si fuera
     // el estreno de la serie completa.
-    const animeFirstEpisodeDate = animeDates?.season === 1 ? animeDates.episodes.get(1)?.airDate : null;
+    animeFirstEpisodeDate = animeDates?.season === 1 ? animeDates.episodes.get(1)?.airDate : null;
     videos = await Promise.all(
       episodeList.map(async (episode) => {
           // Fecha real de streaming (Crunchyroll) en vez de la de TV Japon que trae TVDB.
