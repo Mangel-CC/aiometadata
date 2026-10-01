@@ -2579,7 +2579,15 @@ async function buildTvdbSeriesResponse(stremioId, tvdbShow, tvdbEpisodes, langua
     
     
     const nowMs = Date.now();
-    const animeDates = isAnime ? await getAnimeEpisodeDates(imdbId) : null;
+    // isAnime (parametro) viene en false para CUALQUIER show pedido por id tt/tvdb plano
+    // (getSeriesMeta no tiene forma de saberlo -- ver forceAnimeForDetectedImdb) aunque el
+    // propio TVDB SI declare genero Animation + pais Japon -- confirmado en vivo con
+    // Overgeared (recien estrenado, pedido como tt... normal): nunca llegaba a pedir la
+    // fecha real de streaming porque isAnime quedaba hardcodeado en false mas arriba en
+    // getSeriesMeta. Se detecta aca, con los datos de TVDB que YA se tienen, sin tocar el
+    // resto de la funcion (seleccion de arte/idProvider siguen usando el isAnime original).
+    const isAnimeDetected = isAnime || isAnimeFunc(tvdbShow, []);
+    const animeDates = isAnimeDetected ? await getAnimeEpisodeDates(imdbId) : null;
     videos = await Promise.all(
       episodeList.map(async (episode) => {
           // Fecha real de streaming (Crunchyroll) en vez de la de TV Japon que trae TVDB.
