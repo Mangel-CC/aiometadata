@@ -2588,6 +2588,11 @@ async function buildTvdbSeriesResponse(stremioId, tvdbShow, tvdbEpisodes, langua
     // resto de la funcion (seleccion de arte/idProvider siguen usando el isAnime original).
     const isAnimeDetected = isAnime || isAnimeFunc(tvdbShow, []);
     const animeDates = isAnimeDetected ? await getAnimeEpisodeDates(imdbId) : null;
+    // Fecha de estreno a nivel show (campo "released" del meta, separado del "released" por
+    // episodio de abajo): solo se pisa con la de streaming cuando animeDates corresponde a la
+    // temporada 1 -- evita mostrar la fecha del episodio 1 de una temporada 2+ como si fuera
+    // el estreno de la serie completa.
+    const animeFirstEpisodeDate = animeDates?.season === 1 ? animeDates.episodes.get(1)?.airDate : null;
     videos = await Promise.all(
       episodeList.map(async (episode) => {
           // Fecha real de streaming (Crunchyroll) en vez de la de TV Japon que trae TVDB.
@@ -2774,7 +2779,7 @@ async function buildTvdbSeriesResponse(stremioId, tvdbShow, tvdbEpisodes, langua
     description: Utils.addMetaProviderAttribution(overview, 'TVDB', config),
     year: year,
     releaseInfo: tvdbReleaseInfo,
-    released: tvdbShow.firstAired ? resolveReleaseTimestamp(tvdbShow.firstAired, { originCountry: tvdbShow.originalCountry, airsTime: tvdbShow.airsTime }) : null,
+    released: animeFirstEpisodeDate || (tvdbShow.firstAired ? resolveReleaseTimestamp(tvdbShow.firstAired, { originCountry: tvdbShow.originalCountry, airsTime: tvdbShow.airsTime }) : null),
     runtime: Utils.parseRunTime(tvdbShow.averageRuntime),
     status: tvdbShow.status?.name,
     _stability: deriveStabilityStamp('tvdb', tvdbShow, 'series'),
