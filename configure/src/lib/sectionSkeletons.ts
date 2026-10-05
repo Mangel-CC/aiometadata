@@ -199,6 +199,15 @@ export const SECTION_SKELETONS: Record<SettingsSectionId, SkeletonSpec> = {
     ],
   },
 
+  'profiles': {
+    className: 'space-y-6',
+    blocks: [
+      { kind: 'heading', title: 'Perfiles', description: 'Una configuración por persona que sigue a esta.' },
+      { kind: 'card', card: { descriptionLines: 1, control: 'input', controlCount: 2 } },
+      { kind: 'card', card: { descriptionLines: 1, control: 'switch-list', controlCount: 3 } },
+    ],
+  },
+
   // ConfigurationManager opens straight onto cards — it has no page h2.
   'configuration': {
     className: 'space-y-6',

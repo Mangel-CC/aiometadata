@@ -7,6 +7,7 @@ export type SettingsSectionId =
   | 'filters'
   | 'search'
   | 'catalogs'
+  | 'profiles'
   | 'configuration';
 
 export interface SettingsSection {
@@ -24,6 +25,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: 'filters', title: 'Filters' },
   { id: 'search', title: 'Search' },
   { id: 'catalogs', title: 'Catalogs' },
+  { id: 'profiles', title: 'Perfiles' },
   { id: 'configuration', title: 'Configuration' },
 ];
 

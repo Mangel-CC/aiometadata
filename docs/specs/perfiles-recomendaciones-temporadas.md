@@ -22,8 +22,8 @@ orden de catálogos) hay que repetirlo 4 veces. Además:
 
 ### No objetivos
 
-- No se toca la interfaz de configuración de AIOMetadata en esta primera entrega: las hijas se
-  crean y administran con un script.
+- ~~No se toca la interfaz de configuración~~: desde la entrega 4 los perfiles se administran en
+  la sección **Perfiles** de la configuración principal (ver 3.4).
 - No se construye un recomendador propio con aprendizaje automático: se usan las recomendaciones
   de TMDB sobre lo que el perfil ya vio.
 - No se sincroniza nada hacia Nuvio: AIOMetadata solo lee.
@@ -155,6 +155,24 @@ suben una sola vez y se quedan.
   que se parece en géneros a lo recién elegido. Lo que se recorre no se pierde: baja. En el
   catálogo de anime no se aplican los topes de animación ni de infantil.
 
+### 3.4 Sección "Perfiles" en la interfaz
+
+En la configuración principal (`#profiles`). Pide la contraseña de la principal (o una sesión de
+cuenta dueña de ella), igual que cargarla; una hija recibe un aviso y no administra nada.
+
+- **Cuenta de Nuvio**: conectar con correo y contraseña (solo se guardan los tokens en
+  `nuvio_sessions`) o desconectar. Muestra los perfiles de la cuenta.
+- **Esta configuración**: perfil de Nuvio, anime y variedad de la principal; van en `config.nuvio`
+  y se aplican con el botón de guardar, como el resto de la configuración.
+- **Cada perfil**: nombre, perfil de Nuvio, anime, variedad (Normal / Más flojo / Sin límites),
+  catálogos ocultos (`catalogToggles` por `<id>:<type>`), URL del addon, borrar. Se guardan al
+  momento porque cada perfil es su propia fila.
+- **Agregar perfil**: nombre y perfil de Nuvio; entra con la misma contraseña que la principal.
+
+API (`addon/lib/profilesApi.js`, todas POST con `password`): `/api/profiles/:uuid/list`,
+`create`, `update/:child`, `delete/:child`, `nuvio/connect`, `nuvio/disconnect`. Límite propio de
+60 peticiones por minuto por configuración.
+
 ### 3.3 Catálogos de temporada
 
 Catálogos `seasonal.<id>` definidos en un archivo de datos (`addon/static/seasonal.json`), cada uno
@@ -185,6 +203,7 @@ con su ventana de fechas y su consulta a TMDB:
 | 1 | Herencia | Resolución en `getUserConfig`, script para crear/editar hijas | Bajo |
 | 2 | Temporada | `seasonal.json`, filtro por fecha en el manifest, handler de catálogo | Bajo |
 | 3 | Recomendaciones | Cliente de Nuvio, catálogo `nuvio.recommended` | Medio |
+| 4 | Interfaz | Sección Perfiles en la configuración principal | Bajo |
 
 Cada entrega se prueba y se despliega por separado, con la imagen anterior guardada para revertir.
 

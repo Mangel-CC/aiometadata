@@ -208,6 +208,16 @@ export interface ManagerAccount {
   lastSyncedAt?: string;
 }
 
+export interface NuvioProfileSettings {
+  /** Perfil de Nuvio cuyo historial alimenta las recomendaciones (1 = principal). */
+  profileIndex?: number;
+  profileName?: string;
+  /** false apaga "Anime recomendado para ti". */
+  anime?: boolean;
+  /** Topes de variedad por bloque de 10; sin esto, los de siempre. */
+  themeCaps?: Partial<Record<'superhero' | 'animation' | 'kids' | 'anime', number>> | null;
+}
+
 export interface AppConfig {
   language: string;
   addonName: string;
@@ -426,6 +436,8 @@ export interface AppConfig {
   tags?: TagDef[];
   catalogModeOnly?: boolean;
   hideStremioCatalogs?: boolean;
+  /** Recomendaciones de Nuvio de esta configuracion (ver la seccion Perfiles). */
+  nuvio?: NuvioProfileSettings;
   collectionCatalogs?: boolean;
   /** Install URL of a stream addon the Jellyfin server delegates playback to. */
   jellyfinStreamUrl?: string;

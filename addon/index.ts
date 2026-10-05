@@ -715,6 +715,28 @@ addon.post("/api/config/load/:userUUID", configLoadRateLimitMiddleware, configAp
 addon.put("/api/config/update/:userUUID", configApi.updateConfig.bind(configApi));
 addon.post("/api/config/migrate", configApi.migrateFromLocalStorage.bind(configApi));
 addon.get('/api/config/is-trusted/:uuid', configApi.isTrusted.bind(configApi));
+// Perfiles (configuraciones hijas) administrados desde la principal; ver lib/profilesApi.js.
+const profilesApi = require('./lib/profilesApi');
+// Cada interruptor de la seccion guarda al momento, asi que lleva su propio limite (mas holgado que
+// el de cargar la configuracion) para no bloquear al editar; sigue frenando adivinar contrasenas.
+async function profilesRateLimit(req, res, next) {
+  if (!redis) return next();
+  try {
+    const rateKey = `rate-limit:profiles:${req.params.userUUID || req.ip || 'unknown'}:${Math.floor(Date.now() / 60000)}`;
+    const count = await redis.incr(rateKey);
+    if (count === 1) await redis.expire(rateKey, 70);
+    if (count > 60) return res.status(429).json({ error: 'Demasiadas solicitudes; espera un momento.' });
+  } catch (error) {
+    consola.warn('[Rate Limit] /api/profiles limiter failed, allowing request:', error.message);
+  }
+  next();
+}
+addon.post('/api/profiles/:userUUID/list', profilesRateLimit, profilesApi.list);
+addon.post('/api/profiles/:userUUID/create', profilesRateLimit, profilesApi.create);
+addon.post('/api/profiles/:userUUID/update/:childUUID', profilesRateLimit, profilesApi.update);
+addon.post('/api/profiles/:userUUID/delete/:childUUID', profilesRateLimit, profilesApi.remove);
+addon.post('/api/profiles/:userUUID/nuvio/connect', profilesRateLimit, profilesApi.connectNuvio);
+addon.post('/api/profiles/:userUUID/nuvio/disconnect', profilesRateLimit, profilesApi.disconnectNuvio);
 addon.post("/api/test-keys", testKeysRateLimitMiddleware, configApi.testApiKeys);
 
 // --- Trakt OAuth Routes ---

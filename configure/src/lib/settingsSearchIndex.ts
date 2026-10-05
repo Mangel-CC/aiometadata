@@ -556,6 +556,12 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   // CatalogsSettings.tsx is 5,512 lines and imports six integration panels
   // (:3-12). Entries named after what people look for.
   {
+    id: 'profiles.root', section: 'profiles', anchor: null,
+    label: 'Perfiles',
+    description: 'Configuraciones por persona que siguen a esta, con recomendaciones de Nuvio.',
+    keywords: ['perfil', 'profile', 'nuvio', 'recomendaciones', 'recommendations', 'hija', 'child'],
+  },
+  {
     id: 'catalogs.root', section: 'catalogs', anchor: null,
     label: 'Catalog Management',
     description: 'Add, remove, reorder and rename the catalogs your addon exposes.',

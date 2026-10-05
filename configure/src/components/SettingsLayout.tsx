@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import {
   ChevronLeft, ChevronRight,
   Sparkles, SlidersHorizontal, KeyRound, Film, Paintbrush,
-  Filter, Search, LayoutGrid, Settings2,
+  Filter, Search, LayoutGrid, Settings2, Users,
 } from "lucide-react";
 import { SectionSkeleton } from '@/components/settings/SectionSkeleton';
 import { SectionErrorBoundary } from '@/components/settings/SectionErrorBoundary';
@@ -38,6 +38,7 @@ const SECTION_IMPORTS: Record<SettingsSectionId, () => Promise<{ default: Compon
   'filters': () => import('./sections/FiltersSettings').then((m) => ({ default: m.FiltersSettings as ComponentType })),
   'search': () => import('./sections/SearchSettings').then((m) => ({ default: m.SearchSettings as ComponentType })),
   'catalogs': () => import('./sections/CatalogsSettings').then((m) => ({ default: m.CatalogsSettings as ComponentType })),
+  'profiles': () => import('./sections/ProfilesSettings').then((m) => ({ default: m.ProfilesSettings as ComponentType })),
   'configuration': () => import('./ConfigurationManager').then((m) => ({ default: m.ConfigurationManager as ComponentType })),
 };
 
@@ -68,6 +69,7 @@ const SECTION_VIEWS: Record<SettingsSectionId, {
   'filters': { Component: lazy(SECTION_IMPORTS['filters']), icon: Filter },
   'search': { Component: lazy(SECTION_IMPORTS['search']), icon: Search },
   'catalogs': { Component: lazy(SECTION_IMPORTS['catalogs']), icon: LayoutGrid },
+  'profiles': { Component: lazy(SECTION_IMPORTS['profiles']), icon: Users },
   'configuration': { Component: lazy(SECTION_IMPORTS['configuration']), icon: Settings2 },
 };
 

@@ -871,6 +871,13 @@ class Database {
     return (await this.getQuery(query, [accountUUID])) || null;
   }
 
+  async deleteNuvioSession(accountUUID: string): Promise<void> {
+    const query = this.type === 'sqlite'
+      ? 'DELETE FROM nuvio_sessions WHERE account_uuid = ?'
+      : 'DELETE FROM nuvio_sessions WHERE account_uuid = $1';
+    await this.runQuery(query, [accountUUID]);
+  }
+
   async saveNuvioSession(accountUUID: string, refreshToken: string, accessToken: string | null, expiresAt: number | null): Promise<void> {
     const query = this.type === 'sqlite'
       ? `INSERT INTO nuvio_sessions (account_uuid, refresh_token, access_token, expires_at, updated_at)

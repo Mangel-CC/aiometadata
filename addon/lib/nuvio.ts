@@ -116,6 +116,29 @@ async function rpc(accountUUID: string, fn: string, body: unknown): Promise<any>
   }
 }
 
+/**
+ * Inicia sesion con correo y contrasena y guarda SOLO los tokens: la contrasena no se guarda en
+ * ningun lado. Para cambiar de cuenta basta con volver a conectar.
+ */
+export async function connectNuvio(accountUUID: string, email: string, password: string): Promise<void> {
+  let data: any;
+  try {
+    data = await postJson('/auth/v1/token?grant_type=password', { email, password });
+  } catch (error: any) {
+    if (error?.status === 400 || error?.status === 401) throw new NuvioError('Correo o contrasena de Nuvio incorrectos', 401);
+    throw error;
+  }
+  if (!data?.access_token || !data?.refresh_token) throw new NuvioError('Nuvio no devolvio tokens');
+  const expiresAt = Math.floor(Date.now() / 1000) + (Number(data.expires_in) || 3600);
+  await database.saveNuvioSession(accountUUID, data.refresh_token, data.access_token, expiresAt);
+  logger.info(`Cuenta de Nuvio conectada para ${accountUUID.substring(0, 8)}...`);
+}
+
+export async function disconnectNuvio(accountUUID: string): Promise<void> {
+  await database.deleteNuvioSession(accountUUID);
+  logger.info(`Cuenta de Nuvio desconectada de ${accountUUID.substring(0, 8)}...`);
+}
+
 export async function hasNuvioSession(accountUUID: string): Promise<boolean> {
   try {
     const session = await database.getNuvioSession(accountUUID);
@@ -150,4 +173,4 @@ export async function getWatchProgress(accountUUID: string, profileIndex: number
   return Array.isArray(rows) ? rows : [];
 }
 
-export default { hasNuvioSession, getProfiles, getWatchedItems, getWatchProgress };
+export default { connectNuvio, disconnectNuvio, hasNuvioSession, getProfiles, getWatchedItems, getWatchProgress };
