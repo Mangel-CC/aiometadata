@@ -1,5 +1,6 @@
 import { LRUCache } from 'lru-cache';
 import { withEpisodeOrder } from '../utils/episodeOrder';
+import { assessMetaLocalization, incompleteMetaTtl } from '../utils/localizationCheck';
 import type { MetaHashEntry } from './metaHashStore';
 const redis: any = require('./redisClient');
 const { loadConfigFromDatabase }: any = require('./configApi');
@@ -71,6 +72,20 @@ const {
 const { sourceRefetchRequested }: any = require('./cacheSourceRefetch');
 
 function META_TTL() { return parseInt(process.env.META_TTL || String(7 * 24 * 60 * 60), 10); }
+// Ficha sin traducir al espanol (sinopsis/episodios en ingles o genericos): cache corta.
+function META_INCOMPLETE_TTL() { return parseInt(process.env.META_INCOMPLETE_TTL || '1800', 10); }
+function META_INCOMPLETE_OLD_TTL() { return parseInt(process.env.META_INCOMPLETE_OLD_TTL || '21600', 10); }
+function clampMetaTtlForIncompleteLocalization(meta: any, config: any, ttl: number): number {
+  try {
+    const verdict = assessMetaLocalization(meta, config?.language);
+    if (!verdict.incomplete) return ttl;
+    const short = incompleteMetaTtl(meta, ttl, META_INCOMPLETE_TTL(), META_INCOMPLETE_OLD_TTL());
+    if (short < ttl) cacheLogger.info(`[Meta] ${meta.id} sin traducir (${verdict.reason}): cache ${short}s en vez de ${ttl}s`);
+    return short;
+  } catch {
+    return ttl;
+  }
+}
 function CATALOG_TTL() { return parseInt(process.env.CATALOG_TTL || String(1 * 24 * 60 * 60), 10); }
 const JIKAN_API_TTL = 30 * 24 * 60 * 60;
 const STATIC_CATALOG_TTL = 30 * 24 * 60 * 60;
@@ -1866,6 +1881,7 @@ async function writeMetaComponentsWithConfig({ config, metaId, result, ttl = MET
   const layout = buildMetaHashLayout({ config: withEpisodeOrder(config, meta._tvdbId), metaId, type, useShowPoster });
 
   normalizeMetaReleaseAvailability(meta);
+  ttl = clampMetaTtlForIncompleteLocalization(meta, config, ttl);
 
   try {
     const requestTracker = require('./requestTracker');
@@ -2355,7 +2371,7 @@ async function cacheWrapMetaSmart(userUUID: string, metaId: string, method: () =
       idToCache = metaId;
     }
 
-    await writeMetaAlias({ config, metaId, aliasTo: idToCache, ttl, type, useShowPoster });
+    await writeMetaAlias({ config, metaId, aliasTo: idToCache, ttl: clampMetaTtlForIncompleteLocalization(meta, config, ttl), type, useShowPoster });
     if (metaId !== idToCache) {
       try {
         require('./requestTracker').captureMetadataFromComponents(metaId, meta, meta.type, config?.language || 'en-US').catch(() => {});
