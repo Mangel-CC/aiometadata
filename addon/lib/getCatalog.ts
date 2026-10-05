@@ -31,6 +31,7 @@ import { roundRobinInterleaveTagged, mergedDedupKey, filterMetasByGenre, normali
 const { getTvmazeScheduleCatalog } = require('./tvmazeScheduleCatalog');
 const movielens = require('./movielens');
 import { DEFAULT_SEASONAL_TZ, findSeasonalDef, isWithinWindow } from './seasonal';
+import { NUVIO_RECOMMENDED_ANIME_ID, NUVIO_RECOMMENDED_ID, getNuvioRecommendations, resolveNuvioTarget } from './nuvioRecommendations';
 
 const consola = require('consola');
 const database = require('./database.js');
@@ -72,6 +73,9 @@ async function getCatalog(type: string, language: string, page: number, id: stri
       const tvdbResults = await getTvdbCatalog(type, id, genre, page, language, config, id === 'tvdb.trending', includeVideos);
       return { metas: tvdbResults };
     } 
+    else if (id === NUVIO_RECOMMENDED_ID || id === NUVIO_RECOMMENDED_ANIME_ID) {
+      return { metas: await getNuvioRecommendedCatalog(id, page, language, config, userUUID, includeVideos) };
+    }
     else if (id.startsWith('seasonal.')) {
       logger.debug(`Routing to seasonal catalog handler for id: ${id}`);
       const seasonalResults = await getSeasonalCatalog(type, id, genre, page, language, config, userUUID, includeVideos);
@@ -870,6 +874,31 @@ async function getSeasonalCatalog(type: string, id: string, genre: string, page:
     ],
   };
   return getTmdbAndMdbListCatalog(type, virtualId, genre, page, language, virtualConfig, userUUID, includeVideos);
+}
+
+// Recomendaciones del perfil de Nuvio: la lista sale de nuvioRecommendations.ts y cada titulo pasa
+// por getMeta como en las listas de TVDB, asi que trae el arte e idioma de la configuracion.
+async function getNuvioRecommendedCatalog(id: string, page: number, language: string, config: UserConfig, userUUID: string, includeVideos: boolean): Promise<any[]> {
+  const target = await resolveNuvioTarget(config, userUUID);
+  if (!target) return [];
+  const lists = await getNuvioRecommendations(target, config);
+  const items = id === NUVIO_RECOMMENDED_ANIME_ID ? lists.anime : lists.main;
+  const pageSize = parseInt(process.env.CATALOG_LIST_ITEMS_SIZE || '20');
+  const listPage = typeof page === 'number' ? page : parseInt(String(page), 10) || 1;
+  const pageItems = items.slice(Math.max(0, (listPage - 1) * pageSize), Math.max(0, (listPage - 1) * pageSize) + pageSize);
+  const metas = await Promise.all(pageItems.map(async (item) => {
+    const stremioId = `tmdb:${item.tmdbId}`;
+    try {
+      const result = await cacheWrapMetaSmart(userUUID, stremioId, async () => {
+        return await getMeta(item.type, language, stremioId, config, userUUID, includeVideos);
+      }, undefined, { enableErrorCaching: true, maxRetries: 2, config }, item.type as any, includeVideos);
+      return result?.meta || null;
+    } catch (error: any) {
+      logger.warn(`[Nuvio Recs] Failed to get meta for ${item.type} ${stremioId}: ${error.message}`);
+      return null;
+    }
+  }));
+  return metas.filter(Boolean);
 }
 
 async function getTmdbAndMdbListCatalog(type: string, id: string, genre: string, page: number, language: string, config: UserConfig, userUUID: string, includeVideos: boolean = false): Promise<any[]> {

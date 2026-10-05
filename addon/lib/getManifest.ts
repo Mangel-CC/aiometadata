@@ -24,6 +24,7 @@ const { getSetting }: any = require('./settingsService');
 import consola from 'consola';
 import { hasAnyWatchTrackingEnabled } from './watchTracking';
 import { DEFAULT_SEASONAL_TZ, getSeasonalDefinitions, isWithinWindow, seasonalName } from './seasonal';
+import { NUVIO_RECOMMENDED_ANIME_ID, NUVIO_RECOMMENDED_ID, resolveNuvioTarget } from './nuvioRecommendations';
 const logger = consola.withTag('Manifest');
 
 
@@ -896,7 +897,7 @@ async function lumiereGenreOptions(): Promise<Record<'movie' | 'series', string[
   }
 }
 
-async function getManifest(config: any, opts: { tags?: string[] } = {}): Promise<any> {
+async function getManifest(config: any, opts: { tags?: string[]; userUUID?: string } = {}): Promise<any> {
   const startTime = Date.now();
   logger.start('Starting manifest generation...');
 
@@ -1732,6 +1733,40 @@ async function getManifest(config: any, opts: { tags?: string[] } = {}): Promise
 
   // Listed first, as on the Jellyfin server.
   catalogs.unshift(...collectionCatalogs(config, tags));
+
+  // Recomendaciones del perfil de Nuvio (ver nuvioRecommendations.ts): arriba de todo, por encima
+  // de los de temporada. Solo si la cuenta tiene sesion de Nuvio; ids fijos para que Nuvio respete
+  // la posicion una vez guardada en el orden del perfil.
+  if (tagSet.size === 0 && opts.userUUID) {
+    try {
+      const target = await resolveNuvioTarget(config, opts.userUUID);
+      if (target) {
+        const toggles = config._catalogToggles || {};
+        const isOff = (id: string) => toggles[id] === false || toggles[`${id}:all`] === false
+          || userCatalogs.some((c: any) => c.id === id && c.enabled === false);
+        const es = String(language).startsWith('es');
+        const recCatalogs: any[] = [];
+        const addRec = (id: string, name: string) => {
+          if (isOff(id) || catalogs.some((c: any) => c?.id === id)) return;
+          recCatalogs.push({
+            id,
+            type: 'all',
+            name: `${showPrefix ? `${prefixName} - ` : ''}${name}`,
+            pageSize: parseInt(process.env.CATALOG_LIST_ITEMS_SIZE as string) || 20,
+            extra: [{ name: 'skip' }],
+            showInHome: true,
+          });
+        };
+        addRec(NUVIO_RECOMMENDED_ID, es ? 'Recomendado para ti' : 'Recommended for you');
+        if (config.nuvio?.anime !== false) {
+          addRec(NUVIO_RECOMMENDED_ANIME_ID, es ? 'Anime recomendado para ti' : 'Anime recommended for you');
+        }
+        catalogs.unshift(...recCatalogs);
+      }
+    } catch (error: any) {
+      logger.warn(`Recomendaciones de Nuvio omitidas del manifest: ${error?.message}`);
+    }
+  }
 
   const nameSuffix = process.env.ADDON_NAME_SUFFIX || "";
   const baseName = config.addonName || (nameSuffix ? `AIOMetadata ${nameSuffix}` : "AIOMetadata");

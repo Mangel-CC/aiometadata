@@ -1547,6 +1547,16 @@ async function cacheWrapCatalog(userUUID: string, catalogKey: string, method: ()
     };
   }
 
+  // Las recomendaciones de Nuvio son por perfil: sin esto las hijas (que comparten todo lo demas
+  // con la principal) recibian la pagina cacheada del perfil 1.
+  const isNuvioRecommended = idOnly === 'nuvio.recommended' || idOnly === 'nuvio.recommended.anime';
+  if (isNuvioRecommended) {
+    catalogConfig.nuvio = {
+      account: config._inheritedFrom?.uuid || userUUID,
+      profile: Number(config.nuvio?.profileIndex) || (config._inheritedFrom ? 0 : 1),
+    };
+  }
+
   const catalogConfigString = JSON.stringify(catalogConfig);
   const configHash = hashConfig(catalogConfigString);
   const catalogConfigShown = JSON.stringify(catalogConfig, (field, value) => (field === 'apiKeys' && value && typeof value === 'object' ? Object.keys(value) : value));
@@ -1593,6 +1603,9 @@ async function cacheWrapCatalog(userUUID: string, catalogKey: string, method: ()
     const { refreshTtl }: any = require('../utils/recommendations/provider');
     cacheTTL = refreshTtl(config);
   }
+
+  // Lo que se acaba de ver tiene que salir pronto de la lista: misma vida que la lista misma.
+  if (isNuvioRecommended) cacheTTL = parseInt(process.env.NUVIO_RECS_TTL || '1800', 10);
 
   const ttlSource = ttlOverrideSources.find(source => source.matches);
   if (ttlSource) {

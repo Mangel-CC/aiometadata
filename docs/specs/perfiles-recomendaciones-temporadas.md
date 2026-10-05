@@ -111,6 +111,38 @@ un **refresh token** para no guardar contraseñas y poder revocar desde Nuvio.
 **Degradación**: sin token, con historial vacío o si Nuvio falla, el catálogo devuelve lista vacía
 y el resto del addon sigue igual.
 
+### 3.2.1 Lo que mostró el historial real (2026-10-05)
+
+| Perfil | Vistos | En progreso | Usa addons del principal |
+|---|---|---|---|
+| 1 Miguel Angel | 2,000+ (427 títulos) | 817 | — |
+| 2 Faby | 118 | 105 | sí |
+| 3 Axel | 26 | 15 | sí |
+| 4 Sebastián | 492 | 560 | sí |
+
+Consecuencias para el diseño:
+
+- **Requisito en Nuvio**: un perfil con "usar addons del perfil principal" activado nunca ve su
+  propia configuración. Hay que desactivarlo en los perfiles 2-4.
+- **Una sesión para los 4**: es la misma cuenta, así que la sesión de Nuvio se guarda una vez
+  (tabla `nuvio_sessions`, por la configuración principal) y las hijas la usan a través de la
+  principal. Supabase **rota el refresh token** en cada renovación: la renovación pasa por un
+  solo camino (single-flight) y se guarda el token nuevo al instante, o un perfil invalidaría la
+  sesión de los otros.
+- **Paginación**: `sync_pull_watched_items` devuelve como máximo 1,000 filas por página.
+- **Ids**: casi todo es IMDb (`tt…`); pocos `kitsu:` y `tmdb:`. En la v1 los `kitsu:` no son
+  semilla (13 de 1,000 en el perfil más grande).
+- **Semillas**: lo marcado como visto cuenta siempre; lo que está en progreso cuenta solo desde el
+  80 % (película) o con al menos un episodio al 80 % (serie). Todo lo visto o empezado, con
+  cualquier porcentaje, se excluye de las recomendaciones.
+
+### 3.2.2 Posición
+
+Los dos catálogos de recomendaciones van **arriba de todo** en el manifest, por encima de los de
+temporada. Usan ids fijos (`nuvio.recommended` / `nuvio.recommended.anime`, tipo `all`) porque
+Nuvio pone al final los catálogos nuevos que no estén en el orden guardado del perfil: así se
+suben una sola vez y se quedan.
+
 ### 3.3 Catálogos de temporada
 
 Catálogos `seasonal.<id>` definidos en un archivo de datos (`addon/static/seasonal.json`), cada uno

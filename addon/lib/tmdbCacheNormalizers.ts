@@ -253,7 +253,7 @@ export function normalizeTmdbTvDetailForCache(series: any) {
   return normalizeTmdbDetailCommonForCache(series);
 }
 
-const RECOMMENDATION_KEYS = ['id', 'title', 'name', 'poster_path', 'backdrop_path', 'release_date', 'first_air_date', 'overview', 'vote_average', 'genre_ids'];
+const RECOMMENDATION_KEYS = ['id', 'title', 'name', 'poster_path', 'backdrop_path', 'release_date', 'first_air_date', 'overview', 'vote_average', 'genre_ids', 'original_language', 'popularity', 'vote_count'];
 
 /** A recommendation row is only ever turned into a card, so only what a card shows is kept. */
 export function normalizeTmdbRecommendationsForCache(page: any) {

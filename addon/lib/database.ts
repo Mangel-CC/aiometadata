@@ -266,6 +266,13 @@ class Database {
 
   async createSQLiteTables(): Promise<void> {
     const queries = [
+      `CREATE TABLE IF NOT EXISTS nuvio_sessions (
+        account_uuid TEXT PRIMARY KEY,
+        refresh_token TEXT NOT NULL,
+        access_token TEXT,
+        expires_at INTEGER,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`,
       `CREATE TABLE IF NOT EXISTS user_configs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_uuid TEXT UNIQUE NOT NULL,
@@ -491,6 +498,13 @@ class Database {
 
   async createPostgreSQLTables(): Promise<void> {
     const queries = [
+      `CREATE TABLE IF NOT EXISTS nuvio_sessions (
+        account_uuid VARCHAR(255) PRIMARY KEY,
+        refresh_token TEXT NOT NULL,
+        access_token TEXT,
+        expires_at BIGINT,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )`,
       `CREATE TABLE IF NOT EXISTS user_configs (
         id SERIAL PRIMARY KEY,
         user_uuid VARCHAR(255) UNIQUE NOT NULL,
@@ -847,6 +861,27 @@ class Database {
     } catch {
       return null;
     }
+  }
+
+  /** Sesion de Nuvio (una por cuenta: la configuracion principal). Ver nuvio.ts. */
+  async getNuvioSession(accountUUID: string): Promise<any> {
+    const query = this.type === 'sqlite'
+      ? 'SELECT account_uuid, refresh_token, access_token, expires_at FROM nuvio_sessions WHERE account_uuid = ?'
+      : 'SELECT account_uuid, refresh_token, access_token, expires_at FROM nuvio_sessions WHERE account_uuid = $1';
+    return (await this.getQuery(query, [accountUUID])) || null;
+  }
+
+  async saveNuvioSession(accountUUID: string, refreshToken: string, accessToken: string | null, expiresAt: number | null): Promise<void> {
+    const query = this.type === 'sqlite'
+      ? `INSERT INTO nuvio_sessions (account_uuid, refresh_token, access_token, expires_at, updated_at)
+         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(account_uuid) DO UPDATE SET refresh_token = excluded.refresh_token,
+           access_token = excluded.access_token, expires_at = excluded.expires_at, updated_at = CURRENT_TIMESTAMP`
+      : `INSERT INTO nuvio_sessions (account_uuid, refresh_token, access_token, expires_at, updated_at)
+         VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+         ON CONFLICT (account_uuid) DO UPDATE SET refresh_token = EXCLUDED.refresh_token,
+           access_token = EXCLUDED.access_token, expires_at = EXCLUDED.expires_at, updated_at = CURRENT_TIMESTAMP`;
+    await this.runQuery(query, [accountUUID, refreshToken, accessToken, expiresAt]);
   }
 
   /** La fila tal cual esta guardada: una hija se ve con inheritsFrom/overrides, sin resolver. */

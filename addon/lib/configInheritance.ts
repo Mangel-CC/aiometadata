@@ -88,6 +88,10 @@ export async function resolveInheritedConfig(
   // cache de meta/catalogo de las hijas no se quede con datos viejos.
   merged._inheritedFrom = { uuid: parentUUID, hash: parent.configHash || null };
 
+  // Los catalogos que el addon agrega solo (recomendaciones, temporada) no estan en la lista, asi
+  // que applyCatalogToggles no los ve; el manifest consulta los interruptores aqui.
+  if (raw.catalogToggles && Object.keys(raw.catalogToggles).length) merged._catalogToggles = { ...raw.catalogToggles };
+
   return merged;
 }
 
