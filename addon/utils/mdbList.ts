@@ -275,6 +275,14 @@ async function makeRateLimitedRequest<T>(
           backoffTime = Math.min(backoffTime + jitter, RATE_LIMIT_CONFIG.maxDelay);
         }
 
+        // Con la cuota diaria agotada MDBList pide esperar horas (retry-after=6288). Esperar eso
+        // dejaba la peticion colgada y, con ella, a Nuvio con la pantalla en negro; mejor fallar
+        // ya. La cuota agotada queda en state y las siguientes peticiones fallan al instante.
+        if (backoffTime > RATE_LIMIT_CONFIG.maxDelay) {
+          logger.error(`Rate limit con espera de ${Math.round(backoffTime / 1000)}s: no se reintenta - ${context}`);
+          throw error;
+        }
+
         logger.warn(`Rate limit hit. Retrying in ${Math.round(backoffTime)}ms (attempt ${attempt}/${retries}) - ${context}`);
 
         // Set User Penalty Box
