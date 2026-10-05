@@ -23,6 +23,7 @@ import { fetchLumiereGenres, lumiereApiBase, lumiereGenreLabel, lumiereListOf } 
 const { getSetting }: any = require('./settingsService');
 import consola from 'consola';
 import { hasAnyWatchTrackingEnabled } from './watchTracking';
+import { DEFAULT_SEASONAL_TZ, getSeasonalDefinitions, isWithinWindow, seasonalName } from './seasonal';
 const logger = consola.withTag('Manifest');
 
 
@@ -1695,6 +1696,38 @@ async function getManifest(config: any, opts: { tags?: string[] } = {}): Promise
       ],
       name: "Calendar videos"
     });
+  }
+
+  // Catalogos de temporada (ver seasonal.ts): se agregan solos mientras su fecha esta activa y
+  // desaparecen al terminar, sin que haya que tocar la configuracion. Van arriba de todo porque
+  // duran unas semanas; si la configuracion trae una entrada para uno (p.ej. enabled:false), se
+  // respeta. Con un filtro de tags no se agregan: esos catalogos no llevan tags.
+  if (tagSet.size === 0) {
+    const seasonalTz = config.timezone || DEFAULT_SEASONAL_TZ;
+    const seasonalLanguage = config.language || DEFAULT_LANGUAGE;
+    const seasonalCatalogs: any[] = [];
+    for (const def of getSeasonalDefinitions()) {
+      if (!isWithinWindow(def.window, seasonalTz)) continue;
+      for (const seasonalType of def.types || []) {
+        if (seasonalType === 'series' && !def.querySeries) continue;
+        const seasonalId = `seasonal.${def.id}`;
+        const userEntry = userCatalogs.find((c: any) => c.id === seasonalId && c.type === seasonalType);
+        if (userEntry && userEntry.enabled === false) continue;
+        if (catalogs.some((c: any) => c?.id === seasonalId && c?.type === seasonalType)) continue;
+        seasonalCatalogs.push({
+          id: seasonalId,
+          type: seasonalType,
+          name: `${showPrefix ? `${prefixName} - ` : ''}${seasonalName(def, seasonalLanguage)}`,
+          pageSize: parseInt(process.env.CATALOG_LIST_ITEMS_SIZE as string) || 20,
+          extra: [{ name: 'skip' }],
+          showInHome: userEntry ? userEntry.showInHome !== false : true,
+        });
+      }
+    }
+    if (seasonalCatalogs.length) {
+      catalogs.unshift(...seasonalCatalogs);
+      logger.info(`Catalogos de temporada activos: ${seasonalCatalogs.map(c => `${c.id}:${c.type}`).join(', ')}`);
+    }
   }
 
   // Listed first, as on the Jellyfin server.

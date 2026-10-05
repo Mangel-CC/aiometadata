@@ -6,6 +6,7 @@
 // de tiempo (y Halloween desaparecia un dia antes).
 
 import consola from 'consola';
+import seasonalJson from '../static/seasonal.json';
 
 const logger = consola.withTag('Seasonal');
 
@@ -97,6 +98,34 @@ function secondsUntilLocalMidnight(tz: string, now: Date): number {
   const hour = num('hour') % 24;
   const elapsed = hour * 3600 + num('minute') * 60 + num('second');
   return Math.max(60, 86400 - elapsed);
+}
+
+export interface SeasonalDef {
+  id: string;
+  window: SeasonalWindow;
+  types: Array<'movie' | 'series'>;
+  names: Record<string, string>;
+  /** Parametros de TMDB /discover/movie. */
+  query: Record<string, any>;
+  /** Parametros de TMDB /discover/tv; sin esto el catalogo no tiene version de series. */
+  querySeries?: Record<string, any>;
+}
+
+export function getSeasonalDefinitions(): SeasonalDef[] {
+  return Array.isArray(seasonalJson) ? (seasonalJson as any[]).filter(d => d && d.id && d.window) as SeasonalDef[] : [];
+}
+
+export function findSeasonalDef(id: string): SeasonalDef | undefined {
+  return getSeasonalDefinitions().find(d => d.id === id);
+}
+
+/** Nombre en el idioma de la configuracion; si no hay, otro del mismo idioma (es-MX -> es-ES), y si no, ingles. */
+export function seasonalName(def: SeasonalDef, language: string): string {
+  const names = def.names || {};
+  if (names[language]) return names[language];
+  const base = String(language || '').split('-')[0];
+  const sameLanguage = Object.keys(names).find(k => k.split('-')[0] === base);
+  return (sameLanguage && names[sameLanguage]) || names['en-US'] || def.id;
 }
 
 export default { isWithinWindow, secondsUntilNextWindowChange, civilDateIn, DEFAULT_SEASONAL_TZ };

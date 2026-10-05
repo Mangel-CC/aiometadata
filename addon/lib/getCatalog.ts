@@ -30,6 +30,7 @@ import { resolveDynamicTmdbDiscoverParams } from './tmdbDiscoverDateTokens.js';
 import { roundRobinInterleaveTagged, mergedDedupKey, filterMetasByGenre, normalizeGenreKey } from '../utils/mergedCatalog.js';
 const { getTvmazeScheduleCatalog } = require('./tvmazeScheduleCatalog');
 const movielens = require('./movielens');
+import { DEFAULT_SEASONAL_TZ, findSeasonalDef, isWithinWindow } from './seasonal';
 
 const consola = require('consola');
 const database = require('./database.js');
@@ -71,6 +72,11 @@ async function getCatalog(type: string, language: string, page: number, id: stri
       const tvdbResults = await getTvdbCatalog(type, id, genre, page, language, config, id === 'tvdb.trending', includeVideos);
       return { metas: tvdbResults };
     } 
+    else if (id.startsWith('seasonal.')) {
+      logger.debug(`Routing to seasonal catalog handler for id: ${id}`);
+      const seasonalResults = await getSeasonalCatalog(type, id, genre, page, language, config, userUUID, includeVideos);
+      return { metas: seasonalResults };
+    }
     else if (id.startsWith('tmdb.') || id.startsWith('mdblist.') || id.startsWith('streaming.')) {
       logger.debug(`Routing to TMDB/MDBList catalog handler for id: ${id}`);
       const tmdbResults = await getTmdbAndMdbListCatalog(type, id, genre, page, language, config, userUUID, includeVideos);
@@ -842,6 +848,28 @@ async function getTvdbDiscoverCatalog(
     logger.error(`[TVDB Discover] Error fetching catalog ${id}: ${error.message}`);
     return [];
   }
+}
+
+// Catalogo de temporada: reutiliza tal cual el camino de los catalogos "TMDB Discover" (conversion
+// de resultados, filtros, metadatos) pasandole la consulta de seasonal.json como si fuera un
+// catalogo discover guardado en la configuracion. Fuera de su ventana devuelve vacio, por si un
+// cliente aun tiene el manifest viejo.
+async function getSeasonalCatalog(type: string, id: string, genre: string, page: number, language: string, config: UserConfig, userUUID: string, includeVideos: boolean): Promise<any[]> {
+  const def = findSeasonalDef(id.slice('seasonal.'.length));
+  if (!def) return [];
+  if (!isWithinWindow(def.window, (config as any).timezone || DEFAULT_SEASONAL_TZ)) return [];
+  if (!(def.types || []).includes(type as any)) return [];
+  const params = type === 'movie' ? def.query : def.querySeries;
+  if (!params) return [];
+  const virtualId = `tmdb.discover.seasonal_${def.id}`;
+  const virtualConfig: any = {
+    ...config,
+    catalogs: [
+      ...((config as any).catalogs || []),
+      { id: virtualId, type, enabled: true, metadata: { discover: { params: { ...params } } } },
+    ],
+  };
+  return getTmdbAndMdbListCatalog(type, virtualId, genre, page, language, virtualConfig, userUUID, includeVideos);
 }
 
 async function getTmdbAndMdbListCatalog(type: string, id: string, genre: string, page: number, language: string, config: UserConfig, userUUID: string, includeVideos: boolean = false): Promise<any[]> {
