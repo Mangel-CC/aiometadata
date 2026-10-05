@@ -8,6 +8,7 @@ const redisIdCache: any = require('./redis-id-cache');
 import consola from 'consola';
 
 const logger = consola.withTag('Database');
+import { isChildConfig, resolveInheritedConfig } from './configInheritance';
 
 type DbType = 'sqlite' | 'postgres';
 
@@ -775,6 +776,19 @@ class Database {
       }
     }
 
+    // Una hija guarda solo su diferencia. Si llega una configuracion COMPLETA para un uuid que en
+    // la base es hija, guardarla aplanaria la herencia en silencio (y el perfil dejaria de seguir
+    // a la principal para siempre). Se rechaza: las hijas se administran con el script.
+    const storedRaw = await this.getRawUserConfig(userUUID).catch(() => null);
+    if (isChildConfig(storedRaw) && !isChildConfig(normalizedConfig)) {
+      const err: any = new Error(
+        `La configuracion ${String(userUUID).substring(0, 8)}... hereda de ${String(storedRaw.inheritsFrom).substring(0, 8)}...; ` +
+        `guardarla completa romperia la herencia. Edita la principal, o manda inheritsFrom/overrides.`
+      );
+      err.code = 'CONFIG_IS_INHERITED_CHILD';
+      throw err;
+    }
+
     const newAppPassword = typeof normalizedConfig?.jellyfinAppPassword === 'string' ? normalizedConfig.jellyfinAppPassword : '';
     const previousAppPassword = newAppPassword
       ? (await this.getUserConfig(userUUID).catch(() => null))?.jellyfinAppPassword
@@ -835,7 +849,8 @@ class Database {
     }
   }
 
-  async getUserConfig(userUUID: string): Promise<any> {
+  /** La fila tal cual esta guardada: una hija se ve con inheritsFrom/overrides, sin resolver. */
+  async getRawUserConfig(userUUID: string): Promise<any> {
     const query = this.type === 'sqlite'
       ? 'SELECT config_data FROM user_configs WHERE user_uuid = ?'
       : 'SELECT config_data FROM user_configs WHERE user_uuid = $1';
@@ -851,6 +866,27 @@ class Database {
       logger.error('Error parsing config data:', error);
       return null;
     }
+  }
+
+  /**
+   * La configuracion que ve el resto del addon. Una hija (inheritsFrom) llega ya combinada con su
+   * principal, asi que ningun llamador necesita saber que la herencia existe. Para editar o
+   * guardar hay que usar getRawUserConfig, o el guardado aplanaria la herencia.
+   */
+  async getUserConfig(userUUID: string): Promise<any> {
+    const raw = await this.getRawUserConfig(userUUID);
+    if (!isChildConfig(raw)) return raw;
+    return resolveInheritedConfig(raw, (parentUUID: string) => this.getRawUserConfig(parentUUID));
+  }
+
+  /** UUID de las hijas que heredan de esta principal (para invalidar su cache al guardar). */
+  async findChildConfigUUIDs(parentUUID: string): Promise<string[]> {
+    const needle = `%"inheritsFrom":"${parentUUID}"%`;
+    const query = this.type === 'sqlite'
+      ? "SELECT user_uuid FROM user_configs WHERE REPLACE(config_data, ' ', '') LIKE ?"
+      : "SELECT user_uuid FROM user_configs WHERE REPLACE(config_data, ' ', '') LIKE $1";
+    const rows = await this.allQuery(query, [needle]);
+    return rows ? rows.map((row: any) => row.user_uuid) : [];
   }
 
   async getUser(userUUID: string): Promise<any> {

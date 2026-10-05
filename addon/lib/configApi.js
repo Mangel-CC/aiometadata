@@ -420,6 +420,10 @@ class ConfigApi {
         await configCache.del(userUUID);
       }
 
+      // Las hijas (ver configInheritance) sirven una copia combinada con esta: si no se les tira
+      // la cache, siguen con los valores viejos hasta que venza su TTL.
+      await this.invalidateInheritedChildren(userUUID);
+
       try {
         require('./jellyfin/watched').warmChangedSources(userUUID, oldConfig, persistedConfig || configWithTimestamp);
       } catch (error) {
@@ -850,6 +854,10 @@ class ConfigApi {
         await configCache.del(userUUID);
       }
 
+      // Las hijas (ver configInheritance) sirven una copia combinada con esta: si no se les tira
+      // la cache, siguen con los valores viejos hasta que venza su TTL.
+      await this.invalidateInheritedChildren(userUUID);
+
       try {
         require('./jellyfin/watched').warmChangedSources(userUUID, oldConfig, persistedConfig || configWithTimestamp);
       } catch (error) {
@@ -1152,6 +1160,21 @@ class ConfigApi {
    * The cached configuration itself, shared by every caller, so it is read and
    * never changed. loadConfigFromDatabase hands out a copy a route may change.
    */
+  /** Tira la cache de las configuraciones que heredan de esta, tras guardarla. */
+  async invalidateInheritedChildren(parentUUID) {
+    try {
+      const children = await database.findChildConfigUUIDs(parentUUID);
+      for (const childUUID of children) {
+        await configCache.del(childUUID);
+      }
+      if (children.length) {
+        logger.debug(`Cache invalidada para ${children.length} configuracion(es) hija(s) de ${String(parentUUID).substring(0, 8)}...`);
+      }
+    } catch (error) {
+      logger.warn(`No se pudo invalidar la cache de las hijas de ${String(parentUUID).substring(0, 8)}...: ${error?.message}`);
+    }
+  }
+
   async loadSharedConfig(userUUID) {
     try {
       await this.initialize();
