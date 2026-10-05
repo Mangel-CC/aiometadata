@@ -21,6 +21,14 @@ export function textLanguage(text: unknown): 'es' | 'en' | 'unknown' {
 
 const GENERIC_EPISODE = /^(episode|ep\.?)\s*\d+$/i;
 
+function isEpisodeUntranslated(v: any): boolean {
+  const title = String(v.title || v.name || '').trim();
+  const overview = String(v.overview || v.description || '').trim();
+  const titleBad = !title || GENERIC_EPISODE.test(title) || textLanguage(title) === 'en';
+  const overviewBad = !overview || textLanguage(overview) === 'en';
+  return titleBad || overviewBad;
+}
+
 export function assessMetaLocalization(meta: any, language: string | undefined): { incomplete: boolean; reason: string } {
   if (!meta || !language || !/^es/i.test(language)) return { incomplete: false, reason: '' };
   const description = typeof meta.description === 'string' ? meta.description.trim() : '';
@@ -34,14 +42,16 @@ export function assessMetaLocalization(meta: any, language: string | undefined):
     return Number.isFinite(t) && t <= now;
   });
   if (!aired.length) return { incomplete: false, reason: '' };
-  const missing = aired.filter((v: any) => {
-    const title = String(v.title || v.name || '').trim();
-    const overview = String(v.overview || v.description || '').trim();
-    const titleBad = !title || GENERIC_EPISODE.test(title) || textLanguage(title) === 'en';
-    const overviewBad = !overview || textLanguage(overview) === 'en';
-    return titleBad || overviewBad;
-  }).length;
+  const missing = aired.filter((v: any) => isEpisodeUntranslated(v)).length;
   if (missing / aired.length >= 0.5) return { incomplete: true, reason: `${missing}/${aired.length} episodios sin traducir` };
+
+  // Temporada nueva de una serie ya traducida: los episodios viejos hacen que la proporcion
+  // total se vea bien aunque los de esta semana sigan en ingles/genericos. Los emitidos en
+  // los ultimos 21 dias cuentan por separado.
+  const recentMs = 21 * 24 * 3600 * 1000;
+  const recent = aired.filter((v: any) => now - new Date(v.released).getTime() < recentMs);
+  const recentMissing = recent.filter((v: any) => isEpisodeUntranslated(v)).length;
+  if (recentMissing > 0) return { incomplete: true, reason: `${recentMissing} episodio(s) reciente(s) sin traducir` };
   return { incomplete: false, reason: '' };
 }
 
