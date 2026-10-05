@@ -143,6 +143,18 @@ temporada. Usan ids fijos (`nuvio.recommended` / `nuvio.recommended.anime`, tipo
 Nuvio pone al final los catálogos nuevos que no estén en el orden guardado del perfil: así se
 suben una sola vez y se quedan.
 
+### 3.2.3 Semillas reales y variedad
+
+- **Reproducido vs. marcado a mano**: un título con registro en `sync_pull_watch_progress` se vio
+  en Nuvio. Lo demás se marcó a mano, a menudo de memoria y en ráfagas (10 películas de Marvel en
+  el mismo minuto), y por ser "lo más reciente" acaparaba las semillas. Las semillas reproducidas
+  van primero; las marcadas a mano solo completan, con peso 0.3. Ambas se siguen excluyendo.
+- **Variedad**: la lista por puntos se reordena para que, en cada bloque de 10, haya como mucho
+  2 de superhéroes (palabras clave de TMDB 9715, 9717, 180547, 229266), 3 de animación,
+  2 familiares/infantiles, 2 de anime y 2 empujados por una misma semilla, castigando además lo
+  que se parece en géneros a lo recién elegido. Lo que se recorre no se pierde: baja. En el
+  catálogo de anime no se aplican los topes de animación ni de infantil.
+
 ### 3.3 Catálogos de temporada
 
 Catálogos `seasonal.<id>` definidos en un archivo de datos (`addon/static/seasonal.json`), cada uno

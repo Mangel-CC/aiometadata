@@ -89,6 +89,104 @@ async function toTmdbId(id: string, kind: 'movie' | 'series', config: any): Prom
   return (kind === 'movie' ? result.movie : result.tv) || (kind === 'movie' ? result.tv : result.movie) || null;
 }
 
+interface Candidate {
+  item: RecItem;
+  anime: boolean;
+  seeds: number;
+  genres: Set<number>;
+  /** Temas que no son genero de TMDB pero que acaparan la lista (superheroes). */
+  themes: Set<string>;
+  /** La semilla que mas lo empujo: lo que sale de una misma semilla se parece entre si. */
+  topSeed: string;
+  topPoints: number;
+}
+
+// Variedad (ver spec 3.2.3). La lista por puntos sola se llena de "mas de lo mismo": diez
+// recomendados de Marvel, o puras caricaturas, porque las recomendaciones de TMDB se quedan dentro
+// de la misma familia y se refuerzan entre si. Se reordena para que, en cada bloque de 10, ningun
+// tema ni ninguna semilla acapare; lo que se recorre no se pierde, baja.
+const DIVERSITY_POOL = 400;
+const WINDOW = 10;
+const THEME_CAPS: Record<string, number> = {
+  superhero: 2,
+  animation: 3,
+  kids: 2,
+  anime: 2,
+};
+const SAME_SEED_CAP = 2;
+const GENRE_SIMILARITY_PENALTY = 0.35;
+const SUPERHERO_KEYWORDS = new Set([9715, 9717, 180547, 229266]); // superhero, based on comic, MCU, DCEU
+const ANIMATION_GENRE = 16;
+const KIDS_GENRES = new Set([10751, 10762]); // Family (cine), Kids (TV)
+
+function themesOf(c: Candidate): string[] {
+  const themes = [...c.themes];
+  if (c.genres.has(ANIMATION_GENRE)) themes.push('animation');
+  if ([...c.genres].some(g => KIDS_GENRES.has(g))) themes.push('kids');
+  if (c.anime) themes.push('anime');
+  return themes;
+}
+
+/** Marca superheroes con las palabras clave de TMDB (cacheadas 7 dias). */
+async function tagThemes(candidates: Candidate[], config: any): Promise<void> {
+  await mapWithConcurrency(candidates, 8, async (c) => {
+    try {
+      const data: any = c.item.type === 'movie'
+        ? await moviedb.movieKeywords(String(c.item.tmdbId), config)
+        : await moviedb.tvKeywords(String(c.item.tmdbId), config);
+      const list: any[] = data?.keywords || data?.results || [];
+      if (list.some(k => SUPERHERO_KEYWORDS.has(Number(k?.id)))) c.themes.add('superhero');
+    } catch {
+      // Sin palabras clave el titulo simplemente no cuenta como superheroes.
+    }
+  });
+}
+
+function genreSimilarity(a: Set<number>, b: Set<number>): number {
+  if (!a.size || !b.size) return 0;
+  let shared = 0;
+  for (const g of a) if (b.has(g)) shared++;
+  return shared / (a.size + b.size - shared);
+}
+
+/**
+ * Reordena en orden de puntos pero, en cada bloque de WINDOW, con tope por tema y por semilla, y
+ * castigando lo que se parece en generos a lo recien elegido. Si nada cumple los topes (pool chico),
+ * se toma el mejor sin topes para no dejar la lista corta.
+ */
+function diversify(pool: Candidate[], ignoreThemes: string[] = []): Candidate[] {
+  const remaining = [...pool];
+  const out: Candidate[] = [];
+  const maxScore = remaining[0]?.item.score || 1;
+  while (remaining.length) {
+    const recent = out.slice(-WINDOW);
+    const themeCount = new Map<string, number>();
+    const seedCount = new Map<string, number>();
+    for (const c of recent) {
+      for (const t of themesOf(c)) themeCount.set(t, (themeCount.get(t) || 0) + 1);
+      seedCount.set(c.topSeed, (seedCount.get(c.topSeed) || 0) + 1);
+    }
+    const fits = (c: Candidate) =>
+      (seedCount.get(c.topSeed) || 0) < SAME_SEED_CAP
+      && themesOf(c).every(t => ignoreThemes.includes(t) || THEME_CAPS[t] === undefined || (themeCount.get(t) || 0) < THEME_CAPS[t]);
+    const last = out.slice(-5);
+    let bestIdx = -1;
+    let bestValue = -Infinity;
+    for (let i = 0; i < remaining.length; i++) {
+      const c = remaining[i];
+      if (!fits(c)) continue;
+      const similarity = last.reduce((m, o) => Math.max(m, genreSimilarity(c.genres, o.genres)), 0);
+      const value = c.item.score / maxScore - GENRE_SIMILARITY_PENALTY * similarity;
+      if (value > bestValue) { bestValue = value; bestIdx = i; }
+      // La lista viene ordenada por puntos: pasado cierto punto ya nada puede ganar.
+      if (c.item.score / maxScore < bestValue) break;
+    }
+    if (bestIdx < 0) bestIdx = 0;
+    out.push(remaining.splice(bestIdx, 1)[0]);
+  }
+  return out;
+}
+
 interface Seed { id: string; kind: 'movie' | 'series'; at: number; played: boolean }
 
 /** Lo marcado a mano como visto (sin reproduccion en Nuvio) cuenta, pero mucho menos. */
@@ -151,7 +249,7 @@ async function computeRecommendations(target: NuvioTarget, config: any): Promise
     if (tmdbId) seenTmdb.add(`${kind}:${tmdbId}`);
   });
 
-  const scores = new Map<string, { item: RecItem; anime: boolean; seeds: number }>();
+  const scores = new Map<string, Candidate>();
   await mapWithConcurrency(recentSeeds, 6, async (seed, rank) => {
     const tmdbId = await toTmdbId(seed.id, seed.kind, config);
     if (!tmdbId) return;
@@ -182,15 +280,27 @@ async function computeRecommendations(target: NuvioTarget, config: any): Promise
       if (entry) {
         entry.item.score += points;
         entry.seeds += 1;
+        if (points > entry.topPoints) { entry.topPoints = points; entry.topSeed = seed.id; }
       } else {
-        scores.set(key, { item: { tmdbId: result.id, type, score: points }, anime: isAnime(result), seeds: 1 });
+        scores.set(key, {
+          item: { tmdbId: result.id, type, score: points },
+          anime: isAnime(result),
+          seeds: 1,
+          genres: new Set<number>((result.genre_ids || []).map(Number)),
+          themes: new Set<string>(),
+          topSeed: seed.id,
+          topPoints: points,
+        });
       }
     });
   });
 
   const ranked = [...scores.values()].sort((a, b) => b.item.score - a.item.score);
-  const main = ranked.filter(e => !e.anime).slice(0, MAX_ITEMS).map(e => e.item);
-  const anime = ranked.filter(e => e.anime).slice(0, MAX_ITEMS).map(e => e.item);
+  const mainPool = ranked.filter(e => !e.anime).slice(0, DIVERSITY_POOL);
+  const animePool = ranked.filter(e => e.anime).slice(0, DIVERSITY_POOL);
+  await tagThemes([...mainPool, ...animePool], config);
+  const main = diversify(mainPool).slice(0, MAX_ITEMS).map(e => e.item);
+  const anime = diversify(animePool, ['animation', 'kids']).slice(0, MAX_ITEMS).map(e => e.item);
   logger.success(`Perfil ${target.profileIndex}: ${main.length} recomendaciones y ${anime.length} de anime`);
   return { main, anime };
 }
@@ -199,7 +309,7 @@ const computeInFlight = new Map<string, Promise<{ main: RecItem[]; anime: RecIte
 
 /** Las dos listas del perfil, cacheadas 30 minutos. Si Nuvio falla, listas vacias. */
 export async function getNuvioRecommendations(target: NuvioTarget, config: any): Promise<{ main: RecItem[]; anime: RecItem[] }> {
-  const key = `nuvio:recs:v2:${target.accountUUID}:${target.profileIndex}`;
+  const key = `nuvio:recs:v3:${target.accountUUID}:${target.profileIndex}`;
   const cached = await readGlobalCache(key);
   if (cached && Array.isArray(cached.main)) return cached;
 
