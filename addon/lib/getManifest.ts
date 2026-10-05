@@ -1,7 +1,7 @@
 require("dotenv").config();
 import { getGenreList } from "./getGenreList";
 import { getLanguages } from "./getLanguages";
-import { fetchMDBListGenres } from "../utils/mdbList";
+import { fetchMDBListGenres, filterGenresForList, usesMdblistExternalItemsEndpoint } from "../utils/mdbList";
 import { getGenresFromStremThruCatalog, fetchStremThruCatalog } from "../utils/stremthru";
 import { fetchTraktGenres } from "../utils/traktUtils";
 import { getGenresBySelection } from "../static/genres";
@@ -207,6 +207,11 @@ async function createMDBListCatalog(userCatalog: any, mdblistKey: string, prefet
     } else {
       genres = getGenresBySelection(genreSelection);
       logger.info(`MDBList using ${genres.length} static fallback genres for selection: ${genreSelection}`);
+    }
+
+    // Solo los generos que la lista tiene: uno vacio deja la pantalla en negro en Nuvio.
+    if (!usesMdblistExternalItemsEndpoint(userCatalog)) {
+      genres = await filterGenresForList(listId, mdblistKey, userCatalog.type, genres);
     }
 
     const genreOptions = userCatalog.id.startsWith('mdblist.recommended.')

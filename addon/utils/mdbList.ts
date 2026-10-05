@@ -4,7 +4,7 @@ import { resolveAllIds } from "../lib/id-resolver.js";
 const buildInfo = require('../lib/buildInfo');
 import { getMeta } from "../lib/getMeta.js";
 import { mapWithLimit } from "./concurrency.js";
-import { cacheWrapMetaSmart, cacheWrapMDBListGenres, cacheWrapGlobal } from "../lib/getCache.js";
+import { cacheWrapMetaSmart, cacheWrapMDBListGenres, cacheWrapGlobal, readGlobalCache, writeGlobalCache } from "../lib/getCache.js";
 import { UserConfig } from "../types/index.js";
 import { getSetting } from "../lib/settingsService.js";
 import { envInt } from "./envNumber.js";
@@ -904,6 +904,72 @@ async function fetchMDBListGenres(apiKey: string, isAnime: boolean = false): Pro
   }
 }
 
+// Generos que de verdad tiene una lista. El manifest ofrecia los 43 generos de MDBList en todos los
+// catalogos, y en cada lista la mitad viene vacia (en "Suspense" casi todas: MDBList lo tiene aparte
+// de "Thriller" y casi nadie lo usa). Un genero vacio deja la pantalla en negro en Nuvio, asi que el
+// manifest solo ofrece los que la lista tiene. Se calcula en segundo plano: mientras no este en
+// cache, el manifest sigue ofreciendo la lista completa como antes.
+const LIST_GENRES_TTL = 24 * 3600;
+const LIST_GENRES_MAX_ITEMS = 3000;
+const listGenresRefreshing = new Set<string>();
+
+function listGenresKey(listId: string): string {
+  return `mdblist-list-genres:v1:${listId}`;
+}
+
+/** { movie: [...slugs], show: [...slugs] } o null si aun no se calculo. */
+async function getCachedListGenreSlugs(listId: string): Promise<{ movie: string[]; show: string[] } | null> {
+  const cached = await readGlobalCache(listGenresKey(listId));
+  return cached && Array.isArray(cached.movie) && Array.isArray(cached.show) ? cached : null;
+}
+
+function refreshListGenreSlugs(listId: string, apiKey: string): void {
+  if (!apiKey || listGenresRefreshing.has(listId)) return;
+  listGenresRefreshing.add(listId);
+  (async () => {
+    const movie = new Set<string>();
+    const show = new Set<string>();
+    for (let offset = 0; offset < LIST_GENRES_MAX_ITEMS; offset += 1000) {
+      const url = `https://api.mdblist.com/lists/${listId}/items?limit=1000&offset=${offset}&apikey=${apiKey}&append_to_response=genre&unified=true`;
+      const response: any = await makeRateLimitedRequest(
+        () => httpGet(url, { dispatcher: mdblistDispatcher }),
+        apiKey,
+        `MDBList list genres (listId: ${listId}, offset: ${offset})`
+      );
+      const rows: any[] = Array.isArray(response.data) ? response.data : [];
+      for (const row of rows) {
+        const target = row?.mediatype === 'show' ? show : movie;
+        for (const g of row?.genre || []) if (typeof g === 'string' && g) target.add(g.toLowerCase());
+      }
+      if (rows.length < 1000 || response.headers?.['x-has-more'] === 'false') break;
+    }
+    await writeGlobalCache(listGenresKey(listId), { movie: [...movie], show: [...show] }, LIST_GENRES_TTL);
+    logger.info(`MDBList list ${listId}: ${movie.size} generos de peliculas, ${show.size} de series`);
+  })()
+    .catch((err: any) => logger.warn(`No se pudieron calcular los generos de la lista ${listId}: ${err.message}`))
+    .finally(() => listGenresRefreshing.delete(listId));
+}
+
+/**
+ * De los generos que se iban a ofrecer, solo los que la lista tiene para ese tipo. Sin datos aun,
+ * los devuelve todos y lanza el calculo.
+ */
+async function filterGenresForList(listId: string, apiKey: string, catalogType: string, titles: string[]): Promise<string[]> {
+  if (!/^\d+$/.test(listId)) return titles;
+  const slugs = await getCachedListGenreSlugs(listId);
+  if (!slugs) {
+    refreshListGenreSlugs(listId, apiKey);
+    return titles;
+  }
+  const present = new Set<string>(
+    catalogType === 'movie' ? slugs.movie : catalogType === 'series' ? slugs.show : [...slugs.movie, ...slugs.show]
+  );
+  if (!present.size) return titles;
+  const slugOf = (title: string) => genreTitleToSlugMap?.get(title.toLowerCase())
+    || title.toLowerCase().trim().replace(/\s+/g, '-');
+  return titles.filter(title => present.has(slugOf(title)));
+}
+
 async function fetchMdbListSearchItems(query: string, type: string, apiKey: string): Promise<any[]> {
   const url = `https://api.mdblist.com/search/${type}?query=${encodeURIComponent(query)}&limit=30&quick_search=true&apikey=${apiKey}`;
 
@@ -1616,6 +1682,7 @@ async function fetchMdblistLastActivities(apiKey: string): Promise<any> {
 }
 
 export {
+  filterGenresForList,
   fetchMdblistLastActivities,
   fetchMDBListItems,
   fetchMDBListExternalItems,
