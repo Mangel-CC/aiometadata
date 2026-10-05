@@ -1555,6 +1555,7 @@ async function cacheWrapCatalog(userUUID: string, catalogKey: string, method: ()
       v: 3,
       account: config._inheritedFrom?.uuid || userUUID,
       profile: Number(config.nuvio?.profileIndex) || (config._inheritedFrom ? 0 : 1),
+      themeCaps: config.nuvio?.themeCaps || null,
     };
   }
 

@@ -154,7 +154,20 @@ function genreSimilarity(a: Set<number>, b: Set<number>): number {
  * castigando lo que se parece en generos a lo recien elegido. Si nada cumple los topes (pool chico),
  * se toma el mejor sin topes para no dejar la lista corta.
  */
-function diversify(pool: Candidate[], ignoreThemes: string[] = []): Candidate[] {
+/** Topes del perfil: los de siempre, con lo que diga config.nuvio.themeCaps encima (p.ej. un nino). */
+export function themeCapsFor(config: any): Record<string, number> {
+  const caps = { ...THEME_CAPS };
+  const own = config?.nuvio?.themeCaps;
+  if (own && typeof own === 'object') {
+    for (const [theme, value] of Object.entries(own)) {
+      const n = Number(value);
+      if (Number.isFinite(n) && n >= 0) caps[theme] = n;
+    }
+  }
+  return caps;
+}
+
+function diversify(pool: Candidate[], caps: Record<string, number>, ignoreThemes: string[] = []): Candidate[] {
   const remaining = [...pool];
   const out: Candidate[] = [];
   const maxScore = remaining[0]?.item.score || 1;
@@ -168,7 +181,7 @@ function diversify(pool: Candidate[], ignoreThemes: string[] = []): Candidate[] 
     }
     const fits = (c: Candidate) =>
       (seedCount.get(c.topSeed) || 0) < SAME_SEED_CAP
-      && themesOf(c).every(t => ignoreThemes.includes(t) || THEME_CAPS[t] === undefined || (themeCount.get(t) || 0) < THEME_CAPS[t]);
+      && themesOf(c).every(t => ignoreThemes.includes(t) || caps[t] === undefined || (themeCount.get(t) || 0) < caps[t]);
     const last = out.slice(-5);
     let bestIdx = -1;
     let bestValue = -Infinity;
@@ -299,8 +312,9 @@ async function computeRecommendations(target: NuvioTarget, config: any): Promise
   const mainPool = ranked.filter(e => !e.anime).slice(0, DIVERSITY_POOL);
   const animePool = ranked.filter(e => e.anime).slice(0, DIVERSITY_POOL);
   await tagThemes([...mainPool, ...animePool], config);
-  const main = diversify(mainPool).slice(0, MAX_ITEMS).map(e => e.item);
-  const anime = diversify(animePool, ['animation', 'kids']).slice(0, MAX_ITEMS).map(e => e.item);
+  const caps = themeCapsFor(config);
+  const main = diversify(mainPool, caps).slice(0, MAX_ITEMS).map(e => e.item);
+  const anime = diversify(animePool, caps, ['animation', 'kids']).slice(0, MAX_ITEMS).map(e => e.item);
   logger.success(`Perfil ${target.profileIndex}: ${main.length} recomendaciones y ${anime.length} de anime`);
   return { main, anime };
 }
@@ -309,7 +323,7 @@ const computeInFlight = new Map<string, Promise<{ main: RecItem[]; anime: RecIte
 
 /** Las dos listas del perfil, cacheadas 30 minutos. Si Nuvio falla, listas vacias. */
 export async function getNuvioRecommendations(target: NuvioTarget, config: any): Promise<{ main: RecItem[]; anime: RecItem[] }> {
-  const key = `nuvio:recs:v3:${target.accountUUID}:${target.profileIndex}`;
+  const key = `nuvio:recs:v3:${target.accountUUID}:${target.profileIndex}:${JSON.stringify(themeCapsFor(config))}`;
   const cached = await readGlobalCache(key);
   if (cached && Array.isArray(cached.main)) return cached;
 
