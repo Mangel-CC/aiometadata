@@ -89,7 +89,10 @@ async function toTmdbId(id: string, kind: 'movie' | 'series', config: any): Prom
   return (kind === 'movie' ? result.movie : result.tv) || (kind === 'movie' ? result.tv : result.movie) || null;
 }
 
-interface Seed { id: string; kind: 'movie' | 'series'; at: number }
+interface Seed { id: string; kind: 'movie' | 'series'; at: number; played: boolean }
+
+/** Lo marcado a mano como visto (sin reproduccion en Nuvio) cuenta, pero mucho menos. */
+const MANUAL_SEED_WEIGHT = Number(process.env.NUVIO_MANUAL_SEED_WEIGHT || 0.3);
 
 async function computeRecommendations(target: NuvioTarget, config: any): Promise<{ main: RecItem[]; anime: RecItem[] }> {
   const [watched, progress] = await Promise.all([
@@ -102,8 +105,17 @@ async function computeRecommendations(target: NuvioTarget, config: any): Promise
   const seeds = new Map<string, Seed>();
   const addSeed = (id: string, kind: 'movie' | 'series', at: number) => {
     const prev = seeds.get(id);
-    if (!prev || at > prev.at) seeds.set(id, { id, kind, at });
+    if (!prev || at > prev.at) seeds.set(id, { id, kind, at, played: false });
   };
+
+  // Lo que tiene registro de reproduccion se vio en Nuvio. Lo demas se marco a mano, muchas veces
+  // de memoria y en rafagas (diez peliculas de Marvel en el mismo minuto): eso no dice que se haya
+  // visto hace poco ni que sea lo que mas gusta, y como "lo mas reciente" se comia las semillas.
+  const played = new Set<string>();
+  for (const row of progress) {
+    const id = baseId(row.content_id);
+    if (id) played.add(id);
+  }
 
   for (const row of watched) {
     const id = baseId(row.content_id);
@@ -123,8 +135,13 @@ async function computeRecommendations(target: NuvioTarget, config: any): Promise
     if (duration > 0 && position / duration >= WATCHED_THRESHOLD) addSeed(id, kind, toEpochMs(row.last_watched));
   }
 
-  const recentSeeds = [...seeds.values()].sort((a, b) => b.at - a.at).slice(0, MAX_SEEDS);
-  logger.info(`Perfil ${target.profileIndex}: ${watched.length} vistos, ${progress.length} en progreso, ${seeds.size} semillas (se usan ${recentSeeds.length})`);
+  for (const seed of seeds.values()) seed.played = played.has(seed.id);
+  // Primero lo reproducido (por fecha) y despues lo marcado a mano, para completar.
+  const recentSeeds = [...seeds.values()]
+    .sort((a, b) => Number(b.played) - Number(a.played) || b.at - a.at)
+    .slice(0, MAX_SEEDS);
+  const playedCount = recentSeeds.filter(seed => seed.played).length;
+  logger.info(`Perfil ${target.profileIndex}: ${watched.length} vistos, ${progress.length} en progreso, ${seeds.size} semillas (se usan ${recentSeeds.length}: ${playedCount} reproducidas, ${recentSeeds.length - playedCount} marcadas a mano)`);
   if (!recentSeeds.length) return { main: [], anime: [] };
 
   // Lo visto pasado a ids de TMDB, para poder descartarlo de las recomendaciones.
@@ -148,8 +165,11 @@ async function computeRecommendations(target: NuvioTarget, config: any): Promise
       return;
     }
     const results: any[] = Array.isArray(data?.results) ? data.results : [];
-    // Las semillas mas recientes pesan mas (1 -> 0.5) y, dentro de cada lista, las primeras.
-    const seedWeight = 1 - 0.5 * (rank / Math.max(1, recentSeeds.length - 1));
+    // Las semillas reproducidas mas recientes pesan mas (1 -> 0.5), las marcadas a mano poco, y
+    // dentro de cada lista, las primeras.
+    const seedWeight = seed.played
+      ? 1 - 0.5 * (rank / Math.max(1, playedCount - 1))
+      : MANUAL_SEED_WEIGHT;
     results.forEach((result, position) => {
       if (!result?.id) return;
       if ((Number(result.vote_count) || 0) < MIN_VOTES) return;
@@ -179,7 +199,7 @@ const computeInFlight = new Map<string, Promise<{ main: RecItem[]; anime: RecIte
 
 /** Las dos listas del perfil, cacheadas 30 minutos. Si Nuvio falla, listas vacias. */
 export async function getNuvioRecommendations(target: NuvioTarget, config: any): Promise<{ main: RecItem[]; anime: RecItem[] }> {
-  const key = `nuvio:recs:v1:${target.accountUUID}:${target.profileIndex}`;
+  const key = `nuvio:recs:v2:${target.accountUUID}:${target.profileIndex}`;
   const cached = await readGlobalCache(key);
   if (cached && Array.isArray(cached.main)) return cached;
 
