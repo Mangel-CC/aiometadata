@@ -1,0 +1,90 @@
+[
+  {
+    "id": "halloween",
+    "window": { "from": "10-01", "to": "11-15" },
+    "types": ["movie", "series"],
+    "names": {
+      "en-US": "Halloween Picks",
+      "es-ES": "Especial de Halloween",
+      "es-MX": "Especial de Halloween",
+      "pt-BR": "Especial de Halloween",
+      "fr-FR": "Spécial Halloween",
+      "it-IT": "Speciale Halloween",
+      "de-DE": "Halloween-Auswahl"
+    },
+    "comment": "Incluye las palabras clave de Dia de Muertos (209789, 272687, 248688, 322048): por si solas dan 8 titulos, muy poco para una fila propia, y las fechas se traslapan.",
+    "query": {
+      "with_keywords": "3335|209789|272687|248688|322048",
+      "sort_by": "popularity.desc",
+      "vote_count.gte": 50
+    },
+    "querySeries": {
+      "with_keywords": "3335|209789",
+      "sort_by": "popularity.desc",
+      "vote_count.gte": 20
+    }
+  },
+  {
+    "id": "christmas",
+    "window": { "from": "12-01", "to": "01-06" },
+    "types": ["movie", "series"],
+    "names": {
+      "en-US": "Christmas Picks",
+      "es-ES": "Especial de Navidad",
+      "es-MX": "Especial de Navidad",
+      "pt-BR": "Especial de Natal",
+      "fr-FR": "Spécial Noël",
+      "it-IT": "Speciale Natale",
+      "de-DE": "Weihnachts-Auswahl"
+    },
+    "query": {
+      "with_keywords": "207317|260365|5570",
+      "sort_by": "popularity.desc",
+      "vote_count.gte": 50
+    },
+    "querySeries": {
+      "with_keywords": "207317|260365",
+      "sort_by": "popularity.desc",
+      "vote_count.gte": 20
+    }
+  },
+  {
+    "id": "valentines",
+    "window": { "from": "02-01", "to": "02-15" },
+    "types": ["movie"],
+    "names": {
+      "en-US": "Valentine's Picks",
+      "es-ES": "Especial de San Valentín",
+      "es-MX": "Especial de San Valentín",
+      "pt-BR": "Especial de Dia dos Namorados",
+      "fr-FR": "Spécial Saint-Valentin",
+      "it-IT": "Speciale San Valentino",
+      "de-DE": "Valentinstag-Auswahl"
+    },
+    "comment": "Las palabras clave de San Valentin dan CERO titulos en TMDB, asi que se usa el genero romance (10749) con un minimo de votos alto para que salgan las conocidas.",
+    "query": {
+      "with_genres": "10749",
+      "sort_by": "popularity.desc",
+      "vote_count.gte": 500
+    }
+  },
+  {
+    "id": "summer",
+    "window": { "from": "06-15", "to": "08-31" },
+    "types": ["movie"],
+    "names": {
+      "en-US": "Summer Picks",
+      "es-ES": "Especial de verano",
+      "es-MX": "Especial de verano",
+      "pt-BR": "Especial de verão",
+      "fr-FR": "Spécial été",
+      "it-IT": "Speciale estate",
+      "de-DE": "Sommer-Auswahl"
+    },
+    "query": {
+      "with_keywords": "13088|3154|200129",
+      "sort_by": "popularity.desc",
+      "vote_count.gte": 50
+    }
+  }
+]
