@@ -135,7 +135,7 @@ export async function prepareV2(watched: any[], progress: any[], config: any, op
     const dna = seedDna.get(k);
     const fr = dna?.franchise || k;
     const sat = s.sig.like > 0 ? Math.sqrt(groups.get(fr) || 1) : 1;
-    return { key: k, type: s.sig.kind, tmdbId: s.tmdbId, dna, weight: (s.sig.like * s.sig.timeWeight) / sat, title: dna?.title || s.sig.id };
+    return { key: k, type: s.sig.kind, tmdbId: s.tmdbId, dna, weight: (s.sig.like * s.sig.timeWeight) / sat, title: s.sig.title || dna?.title || s.sig.id };
   });
   const positives = seeds.filter(s => s.weight > 0).sort((a, b) => b.weight - a.weight);
 

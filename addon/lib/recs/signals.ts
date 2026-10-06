@@ -8,6 +8,8 @@ const DAY = 86400000;
 export interface TitleSignal {
   /** tt… o tmdb:N */
   id: string;
+  /** Título como lo guarda Nuvio (en el idioma de la app). */
+  title: string;
   kind: 'movie' | 'series';
   /** −1 … +1 */
   like: number;
@@ -61,12 +63,13 @@ export function buildSignals(watched: any[], progress: any[], options: SignalOpt
     watchedMovie: boolean;
     watchedAt: number[];
     progress: Array<{ completion: number; at: number; episodeKey: string }>;
+    title: string;
   }
   const acc = new Map<string, Acc>();
   const get = (id: string, kind: 'movie' | 'series') => {
     let a = acc.get(id);
     if (!a) {
-      a = { kind, watchedEpisodes: new Set(), watchedMovie: false, watchedAt: [], progress: [] };
+      a = { kind, watchedEpisodes: new Set(), watchedMovie: false, watchedAt: [], progress: [], title: '' };
       acc.set(id, a);
     }
     return a;
@@ -76,6 +79,7 @@ export function buildSignals(watched: any[], progress: any[], options: SignalOpt
     const id = baseId(row.content_id);
     if (!id) continue;
     const a = get(id, kindOf(row.content_type));
+    if (!a.title && row.title) a.title = String(row.title);
     if (a.kind === 'movie') a.watchedMovie = true;
     else a.watchedEpisodes.add(`${row.season ?? 0}:${row.episode ?? 0}`);
     const at = toEpochMs(row.watched_at);
@@ -125,7 +129,7 @@ export function buildSignals(watched: any[], progress: any[], options: SignalOpt
       ? Math.max(o.timeFloor, Math.pow(0.5, Math.max(0, (now - lastAt) / DAY) / o.halfLifeDays))
       : o.manualTimeWeight;
 
-    out.set(id, { id, kind: a.kind, like, timeWeight, played, firstAt, lastAt, episodes, seen: true });
+    out.set(id, { id, title: a.title, kind: a.kind, like, timeWeight, played, firstAt, lastAt, episodes, seen: true });
   }
   return out;
 }
