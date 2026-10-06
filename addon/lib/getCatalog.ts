@@ -898,7 +898,9 @@ async function getNuvioRecommendedCatalog(id: string, page: number, language: st
       const es = String(language || '').startsWith('es');
       const titles = item.because.slice(0, 2);
       const joined = titles.length === 2 ? `${titles[0]} ${es ? 'y' : 'and'} ${titles[1]}` : titles[0];
-      const lead = `${es ? 'Porque viste' : 'Because you watched'} ${joined}.`;
+      const lead = item.becauseMode === 'alsoLiked'
+        ? `${es ? 'A quienes vieron' : 'People who watched'} ${joined} ${es ? 'también les gustó.' : 'also liked it.'}`
+        : `${es ? 'Porque viste' : 'Because you watched'} ${joined}.`;
       return { ...meta, description: meta.description ? `${lead}\n\n${meta.description}` : lead };
     } catch (error: any) {
       logger.warn(`[Nuvio Recs] Failed to get meta for ${item.type} ${stremioId}: ${error.message}`);

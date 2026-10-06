@@ -21,6 +21,8 @@ import { attachAnilistTags } from './anilistTags';
 const logger = consola.withTag('RecsV2');
 
 export interface Weights {
+  /** Castigo a lo archiconocido y viejo (lo más probable es que ya se haya visto fuera de Nuvio). */
+  known: number;
   /** Tendencia (popularidad actual en TMDB). */
   pop: number;
   cf: number;
@@ -31,7 +33,7 @@ export interface Weights {
 }
 
 // Ajustados con la evaluación del 2026-10-06 (ver motor-recomendaciones-v2-evaluacion.md).
-export const DEFAULT_WEIGHTS: Weights = { cf: 0.2, content: 0.8, tmdb: 0.1, quality: 0.6, fresh: 1.5, pop: 0.4 };
+export const DEFAULT_WEIGHTS: Weights = { cf: 0.6, content: 0.8, tmdb: 0.1, quality: 0.6, fresh: 0.8, pop: 0.4, known: 0 };
 
 export interface V2Options {
   weights?: Partial<Weights>;
@@ -42,11 +44,17 @@ export interface V2Options {
 
 export interface RecItemV2 extends RecItem {
   because?: string[];
+  debug?: any;
 }
 
 /** Peso de cada familia de rasgos en el perfil de contenido. */
 const FAMILY_WEIGHT: Record<string, number> = { g: 1.0, k: 1.4, d: 1.2, c: 0.6, co: 0.4, l: 0.8, e: 0.5, at: 1.4, ag: 0.8 };
 const SUPERHERO_KEYWORDS = new Set([9715, 9717, 180547, 229266]);
+/** Palabras clave de TMDB que no dicen nada del gusto (verificadas por id): créditos con escena extra,
+ *  "basada en libro/manga/manhua", "secuela", "dirigida por mujer", "anime". */
+const STOP_KEYWORDS = new Set([179430, 179431, 818, 9663, 187056, 210024, 13141, 290667]);
+/** Familias que identifican de qué trata algo (para explicar "Porque viste…"). */
+const SPECIFIC_FAMILIES = new Set(['k', 'd', 'c', 'co', 'at']);
 const KIDS_GENRES = new Set([10751, 10762]);
 const DEFAULT_CAPS: Record<string, number> = { superhero: 2, animation: 3, kids: 2, anime: 2 };
 const FRANCHISE_CAP = 1;
@@ -57,7 +65,7 @@ const WINDOW = 10;
 function features(d: Dna): Map<string, number> {
   const f = new Map<string, number>();
   for (const g of d.genres) f.set(`g:${g}`, 1);
-  for (const k of d.keywords) f.set(`k:${k}`, 1);
+  for (const k of d.keywords) if (!STOP_KEYWORDS.has(k)) f.set(`k:${k}`, 1);
   for (const x of d.directors) f.set(`d:${x}`, 1);
   for (const x of d.cast) f.set(`c:${x}`, 1);
   for (const x of d.companies) f.set(`co:${x}`, 1);
@@ -191,18 +199,20 @@ export async function prepareV2(watched: any[], progress: any[], config: any, op
     }
   }
   const profileNorm = Math.sqrt([...profile.values()].reduce((a, v) => a + v * v, 0)) || 1;
-  const contentScore = (d: Dna): { score: number; top: string | null } => {
+  const contentScore = (d: Dna): { score: number; top: string | null; matches: Array<[string, number]> } => {
     let dot = 0;
     let norm = 0;
-    let best: [string, number] | null = null;
+    const matches: Array<[string, number]> = [];
     for (const [f, strength] of features(d)) {
       const v = strength * FAMILY_WEIGHT[family(f)] * idf(f);
       norm += v * v;
       const p = profile.get(f) || 0;
       dot += p * v;
-      if (p * v > 0 && (!best || p * v > best[1])) best = [f, p * v];
+      if (p * v > 0) matches.push([f, p * v]);
     }
-    return { score: norm ? dot / (profileNorm * Math.sqrt(norm)) : 0, top: best?.[0] || null };
+    matches.sort((a, b) => b[1] - a[1]);
+    const denom = norm ? profileNorm * Math.sqrt(norm) : 1;
+    return { score: norm ? dot / denom : 0, top: matches[0]?.[0] || null, matches: matches.slice(0, 5).map(([f, v]) => [f, v / denom]) };
   };
 
   // 3c. Contenido: descubrir por los rasgos más fuertes del perfil (palabras clave y personas),
@@ -256,6 +266,57 @@ export async function prepareV2(watched: any[], progress: any[], config: any, op
   const candDna = await getDnaMany(pre.map(c => ({ type: c.type, tmdbId: c.tmdbId })), config);
   await attachAnilistTags([...candDna.values()]);
 
+  // Explicación honesta: "Porque viste X" solo con títulos vistos que de verdad se parecen (comparten
+  // temas, personas, estudio o etiquetas de AniList); si se parece a nada pero la empujó el colaborativo,
+  // "A quienes vieron X también les gustó"; si no, sin explicación.
+  // Público: un título infantil no explica uno para adultos ni al revés (Super Mario "porque viste
+  // Interstellar"). El anime se considera compatible con lo de adultos, no con lo infantil.
+  const audience = (d: Dna): 'kids' | 'anime' | 'adult' =>
+    d.anime ? 'anime' : (d.genres.some(g => KIDS_GENRES.has(g)) || d.genres.includes(16)) ? 'kids' : 'adult';
+  const compatible = (a: Dna, b: Dna) => {
+    const x = audience(a), y = audience(b);
+    return x === y || (x !== 'kids' && y !== 'kids');
+  };
+  // Géneros de series llevados a los de cine para poder compararlos.
+  const TV_TO_MOVIE: Record<number, number[]> = { 10759: [28, 12], 10765: [878, 14], 10768: [10752], 10762: [10751] };
+  const genreSet = (d: Dna) => new Set(d.genres.flatMap(g => TV_TO_MOVIE[g] || [g]));
+  const shareGenre = (a: Dna, b: Dna) => {
+    const ga = genreSet(a);
+    for (const g of genreSet(b)) if (ga.has(g)) return true;
+    return false;
+  };
+
+  const seedSpecific = positives
+    .filter(s => s.dna)
+    .map(s => ({ s, f: new Map([...features(s.dna!)].filter(([f]) => SPECIFIC_FAMILIES.has(family(f)))) }));
+  const explain = (dna: Dna, c: Cand): { because: string[]; becauseMode: 'similar' | 'alsoLiked' | null } => {
+    const mine = [...features(dna)].filter(([f]) => SPECIFIC_FAMILIES.has(family(f)));
+    const ranked = seedSpecific.filter(({ s }) => compatible(dna, s.dna!) && shareGenre(dna, s.dna!)).map(({ s, f }) => {
+      let score = 0;
+      let shared = 0;
+      for (const [feat, strength] of mine) {
+        const other = f.get(feat);
+        if (!other) continue;
+        shared++;
+        score += Math.min(strength, other) * FAMILY_WEIGHT[family(feat)] * idf(feat);
+      }
+      return { s, score: score * Math.max(0.3, s.weight), shared };
+    }).filter(x => x.shared >= 2).sort((a, b) => b.score - a.score);
+    if (ranked.length) {
+      // El segundo título solo se cita si se parece al menos la mitad que el primero.
+      const cited = ranked.slice(0, 2).filter((x, i) => i === 0 || x.score >= ranked[0].score * 0.5);
+      return { because: cited.map(x => x.s.title), becauseMode: 'similar' };
+    }
+    // Sin parecido concreto, solo vale si la eligen los fans de al menos dos títulos vistos (no de uno).
+    const cfSeeds = [...c.seedContrib.entries()].filter(([k, v]) => {
+      if (v <= 0) return false;
+      const sd = seeds.find(x => x.key === k)?.dna;
+      return !sd || (compatible(dna, sd) && shareGenre(dna, sd));
+    }).sort((x, y) => y[1] - x[1]);
+    const top = cfSeeds.slice(0, 2).map(([k]) => seeds.find(x => x.key === k)?.title).filter(Boolean) as string[];
+    return c.cf > 0 && cfSeeds.length >= 2 && top.length ? { because: top, becauseMode: 'alsoLiked' } : { because: [], becauseMode: null };
+  };
+
   // 6. Componentes de la puntuación (los pesos se aplican en rankV2).
   const items: Prepared['items'] = [];
   for (const c of pre) {
@@ -283,11 +344,34 @@ export async function prepareV2(watched: any[], progress: any[], config: any, op
         quality: Math.min(1, Math.max(0, (bayes - 5.5) / 3)),
         fresh: age <= 1 ? 1 : age <= 3 ? 0.5 : 0,
         pop: Math.min(1, Math.log10(1 + dna.popularity) / 3),
+        // 0 hasta ~3,000 votos, 1 desde ~30,000; solo para lo de 8 años o más.
+        known: age >= 8 ? Math.min(1, Math.max(0, (Math.log10(Math.max(1, dna.voteCount)) - 3.5) / 1)) : 0,
       },
-      because: topSeeds.map(k => seeds.find(x => x.key === k)?.title).filter(Boolean) as string[],
+      ...explain(dna, c),
       topSeed: topSeeds[0] || `content:${content.top}`,
       themes,
+      matches: content.matches,
+      seedShares: [...c.seedContrib.entries()].sort((x, y) => y[1] - x[1]).slice(0, 3).map(([k, v]) => [seeds.find(x => x.key === k)?.title || k, v] as [string, number]),
     });
+  }
+  // Validez: lo que no se parece a nada visto ni lo eligen los fans de varios títulos vistos no se
+  // recomienda, aunque puntúe alto por ser estreno o popular ("Mil maneras de morir porque viste Peppa").
+  const before = items.length;
+  for (let i = items.length - 1; i >= 0; i--) if (!items[i].becauseMode) items.splice(i, 1);
+  logger.info(`v2: ${before - items.length} candidatos descartados por no tener relación con lo visto`);
+
+  // Escalas comparables: el colaborativo daba 0.7–1.0 y el contenido 0.05–0.15, así que el primero
+  // decidía solo. Cada fuente pasa a percentil entre los candidatos que puntuó (0 sigue siendo 0).
+  for (const comp of ['cf', 'content', 'tmdb'] as const) {
+    const vals = items.map(it => it.comps[comp]).filter(v => v > 0).sort((a, b) => a - b);
+    if (!vals.length) continue;
+    for (const it of items) {
+      const v = it.comps[comp];
+      if (v <= 0) continue;
+      let lo = 0, hi = vals.length;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (vals[mid] < v) lo = mid + 1; else hi = mid; }
+      it.comps[comp] = (lo + 1) / vals.length;
+    }
   }
   logger.info(`v2: ${positives.length} semillas (${groups.size} franquicias), ${cands.size} candidatos, ${items.length} puntuables`);
   return { items, caps };
@@ -300,8 +384,12 @@ export interface Prepared {
     dna: Dna;
     comps: Record<keyof Weights, number>;
     because: string[];
+    becauseMode: 'similar' | 'alsoLiked' | null;
     topSeed: string;
     themes: string[];
+    /** Para diagnóstico: rasgos del perfil que coincidieron y semillas que más aportaron. */
+    matches?: Array<[string, number]>;
+    seedShares?: Array<[string, number]>;
   }>;
   caps: Record<string, number>;
 }
@@ -317,9 +405,10 @@ export function rankV2(prep: Prepared, weights: Partial<Weights> = {}): { main: 
     // solo la multiplican: un estreno popular que no se parece a nada de lo visto no sube por estar de
     // moda (si sumaran por su cuenta, todos los perfiles terminaban con la misma lista de tendencias).
     score: (weights as any).additive
-      ? (Object.keys(w) as Array<keyof Weights>).reduce((sum, k) => sum + w[k] * (it.comps[k] || 0), 0)
+      ? (Object.keys(w) as Array<keyof Weights>).filter(k => k !== 'known').reduce((sum, k) => sum + w[k] * (it.comps[k] || 0), 0)
       : (w.cf * it.comps.cf + w.content * it.comps.content + w.tmdb * it.comps.tmdb)
-        * (1 + w.quality * (it.comps.quality - 0.5) + w.fresh * it.comps.fresh + w.pop * it.comps.pop),
+        * (1 + w.quality * (it.comps.quality - 0.5) + w.fresh * it.comps.fresh + w.pop * it.comps.pop)
+        * (1 - Math.min(0.9, w.known * it.comps.known)),
   })).sort((x, y) => y.score - x.score);
 
   // 7. Variedad.
@@ -339,7 +428,7 @@ export function rankV2(prep: Prepared, weights: Partial<Weights> = {}): { main: 
     }
     return out;
   };
-  const toItem = (s: Scored): RecItemV2 => ({ tmdbId: s.tmdbId, type: s.type, score: s.score, because: s.because });
+  const toItem = (s: Scored): RecItemV2 => ({ tmdbId: s.tmdbId, type: s.type, score: s.score, because: s.because, becauseMode: s.becauseMode, debug: { comps: s.comps, matches: s.matches, seedShares: s.seedShares, title: s.dna.title, franchise: s.dna.franchise } });
   return {
     main: diversify(scored.filter(s => !s.dna.anime), []).map(toItem),
     anime: diversify(scored.filter(s => s.dna.anime), ['animation', 'kids', 'anime']).map(toItem),

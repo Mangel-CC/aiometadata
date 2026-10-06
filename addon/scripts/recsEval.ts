@@ -65,9 +65,9 @@ async function main() {
         pairs++;
         shared += [...tops[a]].filter(x => tops[b].has(x)).length;
       }
-      return { i, weights, r20: mean(e => e.recall20), r50: mean(e => e.recall50), ndcg: mean(e => e.ndcg20), fr: mean(e => e.franchises20), shared: pairs ? shared / pairs : 0 };
+      return { i, weights, r20: mean(e => e.recall20), r50: mean(e => e.recall50), ndcg: mean(e => e.ndcg20), fr: mean(e => e.franchises20), known: mean(e => e.folds.reduce((a: number, f: any) => a + (f.known20 || 0), 0) / (e.folds.length || 1)), shared: pairs ? shared / pairs : 0 };
     }).sort((a, b) => b.r20 - a.r20 || b.ndcg - a.ndcg || b.r50 - a.r50);
-    for (const r of rows) console.log(`GRID g${r.i} acierto@20 ${(r.r20 * 100).toFixed(1)}% @50 ${(r.r50 * 100).toFixed(1)}% ndcg ${r.ndcg.toFixed(3)} franquicias ${r.fr.toFixed(1)} compartidos ${r.shared.toFixed(1)}/20 ${JSON.stringify(r.weights)}`);
+    for (const r of rows) console.log(`GRID g${r.i} acierto@20 ${(r.r20 * 100).toFixed(1)}% @50 ${(r.r50 * 100).toFixed(1)}% ndcg ${r.ndcg.toFixed(3)} franquicias ${r.fr.toFixed(1)} compartidos ${r.shared.toFixed(1)}/20 archiconocidos ${r.known.toFixed(1)}/20 ${JSON.stringify(r.weights)}`);
   }
   for (const r of results) {
     for (const e of r.reports) {

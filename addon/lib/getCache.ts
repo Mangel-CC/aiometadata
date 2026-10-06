@@ -1552,7 +1552,7 @@ async function cacheWrapCatalog(userUUID: string, catalogKey: string, method: ()
   const isNuvioRecommended = idOnly === 'nuvio.recommended' || idOnly === 'nuvio.recommended.anime';
   if (isNuvioRecommended) {
     catalogConfig.nuvio = {
-      v: 5,
+      v: 9,
       account: config._inheritedFrom?.uuid || userUUID,
       profile: Number(config.nuvio?.profileIndex) || (config._inheritedFrom ? 0 : 1),
       themeCaps: config.nuvio?.themeCaps || null,

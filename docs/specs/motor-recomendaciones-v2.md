@@ -123,6 +123,22 @@ Cada recomendación guarda sus 1–2 semillas que más aportaron; la descripció
 empieza con "Porque viste X y Y" (o "Porque te gustan las historias de viajes en el tiempo" si vino del
 perfil de contenido).
 
+### 3.7.1 Validez (2026-10-06)
+
+Una recomendación solo entra si tiene relación real con lo visto:
+
+- **Parecido**: comparte ≥ 2 rasgos concretos (temas, personas, estudio, etiquetas de AniList) con un
+  título visto, **del mismo público** (infantil con infantil; adultos y anime entre sí) y con **al menos
+  un género en común** (géneros de series traducidos a los de cine). Se explica "Porque viste X".
+- **O colaborativo de varios**: la eligen los fans de ≥ 2 títulos vistos compatibles. Se explica "A
+  quienes vieron X y Y también les gustó".
+- Si no cumple ninguna, se descarta aunque puntúe alto. El segundo título citado solo aparece si se
+  parece al menos la mitad que el primero.
+- Palabras clave que no dicen nada del gusto (créditos con escena extra, "basada en libro/manga",
+  "secuela", "anime"…) no cuentan.
+- Las fuentes se comparan por percentil (si no, el colaborativo, de escala mayor, decidía solo).
+- Se descartó castigar lo archiconocido: de 8 clásicos recomendados, el usuario había visto 2.
+
 ### 3.8 Rendimiento y cuotas
 
 - Nada de MDBList. TMDB con caché (ADN 30 días, recomendaciones 24 h) y concurrencia limitada.

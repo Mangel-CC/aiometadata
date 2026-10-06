@@ -28,6 +28,8 @@ export interface FoldResult {
   franchises20: number;
   maxSameFranchise20: number;
   superhero20: number;
+  /** Archiconocidos y viejos en el top 20 (≥ 10,000 votos y ≥ 8 años): probablemente ya vistos. */
+  known20: number;
   hitTitles: string[];
   /** Top 20 de la lista principal (para medir cuánto se parecen las listas de distintos perfiles). */
   top20: string[];
@@ -105,11 +107,13 @@ export async function evaluateProfile(
       const dnas = await getDnaMany(top, config);
       const franchiseCount = new Map<string, number>();
       let superhero = 0;
+      let known = 0;
       for (const r of top) {
         const d = dnas.get(keyOf(r));
         const fr = d?.franchise || keyOf(r);
         franchiseCount.set(fr, (franchiseCount.get(fr) || 0) + 1);
         if (d?.keywords.some(k => SUPERHERO_KEYWORDS.has(k))) superhero++;
+        if (d && d.voteCount >= 10000 && d.year && new Date(cutoff).getUTCFullYear() - d.year >= 8) known++;
       }
 
       if (process.env.RECS_EVAL_DEBUG) {
@@ -129,6 +133,7 @@ export async function evaluateProfile(
         franchises20: franchiseCount.size,
         maxSameFranchise20: Math.max(0, ...franchiseCount.values()),
         superhero20: superhero,
+        known20: known,
         hitTitles: hit20.map(k => hiddenKeys.get(k)!),
         top20: main.slice(0, 20),
       });
