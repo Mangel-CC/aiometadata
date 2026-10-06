@@ -892,7 +892,14 @@ async function getNuvioRecommendedCatalog(id: string, page: number, language: st
       const result = await cacheWrapMetaSmart(userUUID, stremioId, async () => {
         return await getMeta(item.type, language, stremioId, config, userUUID, includeVideos);
       }, undefined, { enableErrorCaching: true, maxRetries: 2, config }, item.type as any, includeVideos);
-      return result?.meta || null;
+      const meta = result?.meta || null;
+      if (!meta || !item.because?.length) return meta;
+      // "Porque viste X y Y." al inicio de la descripción (copia: la meta cacheada no se toca).
+      const es = String(language || '').startsWith('es');
+      const titles = item.because.slice(0, 2);
+      const joined = titles.length === 2 ? `${titles[0]} ${es ? 'y' : 'and'} ${titles[1]}` : titles[0];
+      const lead = `${es ? 'Porque viste' : 'Because you watched'} ${joined}.`;
+      return { ...meta, description: meta.description ? `${lead}\n\n${meta.description}` : lead };
     } catch (error: any) {
       logger.warn(`[Nuvio Recs] Failed to get meta for ${item.type} ${stremioId}: ${error.message}`);
       return null;

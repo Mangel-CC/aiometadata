@@ -35,6 +35,8 @@ export interface RecItem {
   tmdbId: number;
   type: 'movie' | 'series';
   score: number;
+  /** Títulos vistos que más empujaron esta recomendación ("Porque viste…"). */
+  because?: string[];
 }
 
 /**
@@ -53,7 +55,7 @@ export async function resolveNuvioTarget(config: any, userUUID: string): Promise
   return { accountUUID, profileIndex };
 }
 
-function toEpochMs(value: any): number {
+export function toEpochMs(value: any): number {
   if (value === null || value === undefined) return 0;
   const n = Number(value);
   if (Number.isFinite(n)) return n < 1e12 ? n * 1000 : n;
@@ -62,7 +64,7 @@ function toEpochMs(value: any): number {
 }
 
 /** "tt123", "tt123:1:2" -> "tt123"; "tmdb:55" -> "tmdb:55"; lo demas (kitsu:, etc.) no sirve en v1. */
-function baseId(contentId: string): string | null {
+export function baseId(contentId: string): string | null {
   const id = String(contentId || '').trim();
   const imdb = /^(tt\d+)/.exec(id);
   if (imdb) return imdb[1];
@@ -76,7 +78,7 @@ function kindOf(contentType: string): 'movie' | 'series' {
 }
 
 /** id de IMDb o tmdb:N -> id de TMDB del tipo pedido. Cacheado 30 dias: no cambia. */
-async function toTmdbId(id: string, kind: 'movie' | 'series', config: any): Promise<number | null> {
+export async function toTmdbId(id: string, kind: 'movie' | 'series', config: any): Promise<number | null> {
   if (id.startsWith('tmdb:')) return Number(id.slice(5)) || null;
   const result = await cacheWrapGlobal(`nuvio:find:${id}`, async () => {
     const found: any = await moviedb.find({ id, external_source: 'imdb_id' }, config);
@@ -210,6 +212,21 @@ async function computeRecommendations(target: NuvioTarget, config: any): Promise
     getWatchedItems(target.accountUUID, target.profileIndex),
     getWatchProgress(target.accountUUID, target.profileIndex),
   ]);
+  if (process.env.NUVIO_RECS_ENGINE === 'v1') return computeFromHistory(watched, progress, target.profileIndex, config);
+  try {
+    // Motor v2 (docs/specs/motor-recomendaciones-v2.md). Se carga aquí para no crear una importación
+    // circular (el v2 usa utilidades de este archivo).
+    const { recommendV2 } = require('./recs/engine');
+    return await recommendV2(watched, progress, config, { themeCaps: themeCapsFor(config) });
+  } catch (error: any) {
+    logger.error(`El motor v2 falló para el perfil ${target.profileIndex} (${error?.message}); se usa el v1`);
+    return computeFromHistory(watched, progress, target.profileIndex, config);
+  }
+}
+
+/** El motor v1 sobre un historial dado; separado para poder evaluarlo con historiales recortados. */
+export async function computeFromHistory(watched: any[], progress: any[], profileIndex: number, config: any): Promise<{ main: RecItem[]; anime: RecItem[] }> {
+  const target = { profileIndex };
 
   // Todo lo visto o empezado se excluye; las semillas son lo visto de verdad.
   const seen = new Map<string, 'movie' | 'series'>();
@@ -322,8 +339,16 @@ async function computeRecommendations(target: NuvioTarget, config: any): Promise
 const computeInFlight = new Map<string, Promise<{ main: RecItem[]; anime: RecItem[] }>>();
 
 /** Las dos listas del perfil, cacheadas 30 minutos. Si Nuvio falla, listas vacias. */
+/** Una copia vieja de la lista se guarda una semana para mostrarla mientras se recalcula la nueva. */
+const STALE_TTL = 7 * 24 * 3600;
+
+/**
+ * Las dos listas del perfil. Frescas por 30 minutos; vencidas, se devuelve la anterior al instante y se
+ * recalcula en segundo plano (el cálculo del v2 puede tardar la primera vez). Si Nuvio falla, vacías.
+ */
 export async function getNuvioRecommendations(target: NuvioTarget, config: any): Promise<{ main: RecItem[]; anime: RecItem[] }> {
-  const key = `nuvio:recs:v3:${target.accountUUID}:${target.profileIndex}:${JSON.stringify(themeCapsFor(config))}`;
+  const key = `nuvio:recs:v5:${target.accountUUID}:${target.profileIndex}:${JSON.stringify(themeCapsFor(config))}`;
+  const staleKey = `${key}:stale`;
   const cached = await readGlobalCache(key);
   if (cached && Array.isArray(cached.main)) return cached;
 
@@ -333,6 +358,7 @@ export async function getNuvioRecommendations(target: NuvioTarget, config: any):
       try {
         const lists = await computeRecommendations(target, config);
         await writeGlobalCache(key, lists, RECS_TTL);
+        await writeGlobalCache(staleKey, lists, STALE_TTL);
         return lists;
       } catch (error: any) {
         logger.error(`No se pudieron armar las recomendaciones del perfil ${target.profileIndex}: ${error?.message}`);
@@ -341,6 +367,8 @@ export async function getNuvioRecommendations(target: NuvioTarget, config: any):
     })().finally(() => computeInFlight.delete(key));
     computeInFlight.set(key, flight);
   }
+  const stale = await readGlobalCache(staleKey);
+  if (stale && Array.isArray(stale.main)) return stale;
   return flight;
 }
 
