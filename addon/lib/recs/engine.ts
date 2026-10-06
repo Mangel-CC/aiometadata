@@ -101,6 +101,8 @@ interface Cand {
   tmdb: number;
   /** Contribución por semilla (para la explicación y el tope por semilla). */
   seedContrib: Map<string, number>;
+  cfBy: Map<string, number>;
+  tmdbBy: Map<string, number>;
   fromContent: boolean;
   fromNew: boolean;
 }
@@ -146,7 +148,7 @@ export async function prepareV2(watched: any[], progress: any[], config: any, op
     if (seenKeys.has(k)) return null;
     let c = cands.get(k);
     if (!c) {
-      c = { type, tmdbId, cf: 0, tmdb: 0, seedContrib: new Map(), fromContent: false, fromNew: false };
+      c = { type, tmdbId, cf: 0, tmdb: 0, seedContrib: new Map(), cfBy: new Map(), tmdbBy: new Map(), fromContent: false, fromNew: false };
       cands.set(k, c);
     }
     return c;
@@ -160,6 +162,7 @@ export async function prepareV2(watched: any[], progress: any[], config: any, op
       if (!c) continue;
       const v = s.weight * nb.score;
       c.cf += v;
+      c.cfBy.set(s.key, (c.cfBy.get(s.key) || 0) + v);
       c.seedContrib.set(s.key, (c.seedContrib.get(s.key) || 0) + v);
     }
   }
@@ -182,6 +185,7 @@ export async function prepareV2(watched: any[], progress: any[], config: any, op
       if (!c) return;
       const v = s.weight * (1 - pos / (results.length * 2));
       c.tmdb += v;
+      c.tmdbBy.set(s.key, (c.tmdbBy.get(s.key) || 0) + v);
       c.seedContrib.set(s.key, (c.seedContrib.get(s.key) || 0) + v);
     });
   });
@@ -191,22 +195,28 @@ export async function prepareV2(watched: any[], progress: any[], config: any, op
   const docs = [...seedDna.values()];
   for (const d of docs) for (const f of features(d).keys()) df.set(f, (df.get(f) || 0) + 1);
   const idf = (f: string) => Math.log(1 + (docs.length + 1) / ((df.get(f) || 0) + 1));
-  const profile = new Map<string, number>();
-  for (const s of seeds) {
-    if (!s.dna) continue;
-    for (const [f, strength] of features(s.dna)) {
-      profile.set(f, (profile.get(f) || 0) + s.weight * strength * FAMILY_WEIGHT[family(f)] * idf(f));
+  // Dos perfiles: el anime y lo demás son gustos distintos. Mezclarlos hacía que Danmachi o Black Clover
+  // empujaran Harry Potter y El Señor de los Anillos a "Recomendado para ti".
+  const buildProfile = (pred: (d: Dna) => boolean) => {
+    const prof = new Map<string, number>();
+    for (const s of seeds) {
+      if (!s.dna || !pred(s.dna)) continue;
+      for (const [f, strength] of features(s.dna)) {
+        prof.set(f, (prof.get(f) || 0) + s.weight * strength * FAMILY_WEIGHT[family(f)] * idf(f));
+      }
     }
-  }
-  const profileNorm = Math.sqrt([...profile.values()].reduce((a, v) => a + v * v, 0)) || 1;
+    return { prof, norm: Math.sqrt([...prof.values()].reduce((a, v) => a + v * v, 0)) || 1 };
+  };
+  const profiles = { main: buildProfile(d => !d.anime), anime: buildProfile(d => d.anime) };
   const contentScore = (d: Dna): { score: number; top: string | null; matches: Array<[string, number]> } => {
+    const { prof, norm: profileNorm } = d.anime ? profiles.anime : profiles.main;
     let dot = 0;
     let norm = 0;
     const matches: Array<[string, number]> = [];
     for (const [f, strength] of features(d)) {
       const v = strength * FAMILY_WEIGHT[family(f)] * idf(f);
       norm += v * v;
-      const p = profile.get(f) || 0;
+      const p = prof.get(f) || 0;
       dot += p * v;
       if (p * v > 0) matches.push([f, p * v]);
     }
@@ -217,15 +227,19 @@ export async function prepareV2(watched: any[], progress: any[], config: any, op
 
   // 3c. Contenido: descubrir por los rasgos más fuertes del perfil (palabras clave y personas),
   // aunque no tengan relación directa con ninguna semilla.
-  const topBy = (fam: string, n: number) => [...profile.entries()]
+  const topBy = (prof: Map<string, number>, fam: string, n: number) => [...prof.entries()]
     .filter(([f, v]) => family(f) === fam && v > 0 && (df.get(f) || 0) >= 2)
     .sort((a, b) => b[1] - a[1]).slice(0, n).map(([f]) => f.slice(f.indexOf(':') + 1));
-  const topKeywords = topBy('k', 8);
-  const topDirectors = topBy('d', 4);
+  const topKeywords = topBy(profiles.main.prof, 'k', 8);
+  const topDirectors = topBy(profiles.main.prof, 'd', 4);
+  const topAnimeKeywords = topBy(profiles.anime.prof, 'k', 5);
   const discoverJobs: Array<{ type: 'movie' | 'series'; params: Record<string, any> }> = [];
   for (const k of topKeywords) {
     discoverJobs.push({ type: 'movie', params: { with_keywords: k, sort_by: 'vote_count.desc', 'vote_count.gte': 100 } });
-    discoverJobs.push({ type: 'series', params: { with_keywords: k, sort_by: 'vote_count.desc', 'vote_count.gte': 50 } });
+    discoverJobs.push({ type: 'series', params: { with_keywords: k, without_genres: '16', sort_by: 'vote_count.desc', 'vote_count.gte': 50 } });
+  }
+  for (const k of topAnimeKeywords) {
+    discoverJobs.push({ type: 'series', params: { with_keywords: k, with_genres: '16', with_origin_country: 'JP', sort_by: 'vote_count.desc', 'vote_count.gte': 20 } });
   }
   for (const d of topDirectors) discoverJobs.push({ type: 'movie', params: { with_crew: d, sort_by: 'vote_count.desc' } });
   // 3d. Estrenos: lo nuevo casi no tiene votos ni aparece como "recomendado" de nada todavía, así que
@@ -273,19 +287,31 @@ export async function prepareV2(watched: any[], progress: any[], config: any, op
   // Interstellar"). El anime se considera compatible con lo de adultos, no con lo infantil.
   const audience = (d: Dna): 'kids' | 'anime' | 'adult' =>
     d.anime ? 'anime' : (d.genres.some(g => KIDS_GENRES.has(g)) || d.genres.includes(16)) ? 'kids' : 'adult';
-  const compatible = (a: Dna, b: Dna) => {
-    const x = audience(a), y = audience(b);
-    return x === y || (x !== 'kids' && y !== 'kids');
-  };
+  // Mismo público y mismo mundo: anime con anime, infantil con infantil, lo demás entre sí.
+  const compatible = (a: Dna, b: Dna) => audience(a) === audience(b);
   // Géneros de series llevados a los de cine para poder compararlos.
   const TV_TO_MOVIE: Record<number, number[]> = { 10759: [28, 12], 10765: [878, 14], 10768: [10752], 10762: [10751] };
   const genreSet = (d: Dna) => new Set(d.genres.flatMap(g => TV_TO_MOVIE[g] || [g]));
+  // Que se parezcan como películas, no por una palabra clave suelta: buena parte de los géneros en común
+  // (umbral 0.25: Forrest Gump y Píxeles, 1 de 5, no pasa), o el mismo director/creador.
   const shareGenre = (a: Dna, b: Dna) => {
-    const ga = genreSet(a);
-    for (const g of genreSet(b)) if (ga.has(g)) return true;
-    return false;
+    if (a.directors.some(x => b.directors.includes(x))) return true;
+    const ga = genreSet(a), gb = genreSet(b);
+    let inter = 0;
+    for (const g of gb) if (ga.has(g)) inter++;
+    const union = ga.size + gb.size - inter;
+    return union > 0 && inter / union >= Number(process.env.RECS_GENRE_JACCARD || 0.25);
   };
 
+  const seedByKey = new Map(seeds.map(x => [x.key, x]));
+  const sameWorld = (by: Map<string, number>, dna: Dna) => {
+    let sum = 0;
+    for (const [k, v] of by) {
+      const sd = seedByKey.get(k)?.dna;
+      if (sd && Boolean(sd.anime) === Boolean(dna.anime)) sum += v;
+    }
+    return sum;
+  };
   const seedSpecific = positives
     .filter(s => s.dna)
     .map(s => ({ s, f: new Map([...features(s.dna!)].filter(([f]) => SPECIFIC_FAMILIES.has(family(f)))) }));
@@ -338,9 +364,10 @@ export async function prepareV2(watched: any[], progress: any[], config: any, op
       tmdbId: c.tmdbId,
       dna,
       comps: {
-        cf: c.cf / maxCf,
+        // Solo cuenta lo que aportaron las semillas del mismo mundo (anime con anime, lo demás con lo demás).
+        cf: sameWorld(c.cfBy, dna) / maxCf,
         content: content.score,
-        tmdb: c.tmdb / maxTmdb,
+        tmdb: sameWorld(c.tmdbBy, dna) / maxTmdb,
         quality: Math.min(1, Math.max(0, (bayes - 5.5) / 3)),
         fresh: age <= 1 ? 1 : age <= 3 ? 0.5 : 0,
         pop: Math.min(1, Math.log10(1 + dna.popularity) / 3),

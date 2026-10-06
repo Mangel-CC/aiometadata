@@ -138,6 +138,11 @@ Una recomendación solo entra si tiene relación real con lo visto:
   "secuela", "anime"…) no cuentan.
 - Las fuentes se comparan por percentil (si no, el colaborativo, de escala mayor, decidía solo).
 - Se descartó castigar lo archiconocido: de 8 clásicos recomendados, el usuario había visto 2.
+- **Anime y lo demás son mundos separados**: dos perfiles de contenido (uno por cada catálogo), y el
+  colaborativo/TMDB de una semilla solo cuenta para candidatos de su mismo mundo. Antes Danmachi o Black
+  Clover empujaban Harry Potter y El Señor de los Anillos a "Recomendado para ti".
+- Público estricto (anime con anime, infantil con infantil, lo demás entre sí) y géneros en común de al
+  menos un cuarto (Jaccard ≥ 0.25 tras traducir géneros de series), o el mismo director/creador.
 
 ### 3.8 Rendimiento y cuotas
 
