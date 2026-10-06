@@ -64,12 +64,13 @@ export function buildSignals(watched: any[], progress: any[], options: SignalOpt
     watchedAt: number[];
     progress: Array<{ completion: number; at: number; episodeKey: string }>;
     title: string;
+    titleCounts: Map<string, number>;
   }
   const acc = new Map<string, Acc>();
   const get = (id: string, kind: 'movie' | 'series') => {
     let a = acc.get(id);
     if (!a) {
-      a = { kind, watchedEpisodes: new Set(), watchedMovie: false, watchedAt: [], progress: [], title: '' };
+      a = { kind, watchedEpisodes: new Set(), watchedMovie: false, watchedAt: [], progress: [], title: '', titleCounts: new Map() };
       acc.set(id, a);
     }
     return a;
@@ -79,7 +80,9 @@ export function buildSignals(watched: any[], progress: any[], options: SignalOpt
     const id = baseId(row.content_id);
     if (!id) continue;
     const a = get(id, kindOf(row.content_type));
-    if (!a.title && row.title) a.title = String(row.title);
+    // En series Nuvio a veces guarda el nombre del episodio ("Episodio 12"): se cuenta cada nombre y se
+    // usa el que más se repite, que es el de la serie.
+    if (row.title) a.titleCounts.set(String(row.title), (a.titleCounts.get(String(row.title)) || 0) + 1);
     if (a.kind === 'movie') a.watchedMovie = true;
     else a.watchedEpisodes.add(`${row.season ?? 0}:${row.episode ?? 0}`);
     const at = toEpochMs(row.watched_at);
@@ -95,7 +98,10 @@ export function buildSignals(watched: any[], progress: any[], options: SignalOpt
   }
 
   const out = new Map<string, TitleSignal>();
+  const EPISODE_NAME = /^(episodio|episode|cap[ií]tulo|ep\.?)\s*\d+/i;
   for (const [id, a] of acc) {
+    a.title = [...a.titleCounts.entries()]
+      .sort((x, y) => Number(EPISODE_NAME.test(x[0])) - Number(EPISODE_NAME.test(y[0])) || y[1] - x[1])[0]?.[0] || '';
     const played = a.progress.length > 0;
     const times = [...a.watchedAt, ...a.progress.map(p => p.at)].filter(Boolean);
     const firstAt = times.length ? Math.min(...times) : 0;

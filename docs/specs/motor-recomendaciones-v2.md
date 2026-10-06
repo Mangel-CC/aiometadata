@@ -141,6 +141,12 @@ Una recomendación solo entra si tiene relación real con lo visto:
 - **Anime y lo demás son mundos separados**: dos perfiles de contenido (uno por cada catálogo), y el
   colaborativo/TMDB de una semilla solo cuenta para candidatos de su mismo mundo. Antes Danmachi o Black
   Clover empujaban Harry Potter y El Señor de los Anillos a "Recomendado para ti".
+- **Temas, no solo géneros**: las palabras clave de TMDB se clasifican al construir el ADN (con el nombre
+  que ya trae la respuesta, sin peticiones extra) en tema de la historia, tono ("amused"), lugar/época
+  ("washington dc", "1980s") o dato de producción ("sequel"). En el perfil pesan 1 / 0.2 / 0.3 / 0, y para
+  citar "Porque viste X" hace falta al menos un tema en común (o etiqueta de AniList), o el mismo
+  director/creador. Evaluación: acierto@20 5.6 % → 6.7 %, ndcg del perfil 1 0.098 → 0.141.
+- En series se cita el nombre que más se repite entre los episodios (Nuvio a veces guarda "Episodio 12").
 - Público estricto (anime con anime, infantil con infantil, lo demás entre sí) y géneros en común de al
   menos un cuarto (Jaccard ≥ 0.25 tras traducir géneros de series), o el mismo director/creador.
 

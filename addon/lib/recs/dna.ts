@@ -15,6 +15,41 @@ const UNIVERSE_KEYWORDS: Record<number, string> = {
   // Agregar aqui solo ids verificados en TMDB (https://www.themoviedb.org/keyword/<id>).
 };
 
+export type KeywordKind = 'theme' | 'tone' | 'place' | 'meta';
+
+// TMDB mezcla en las palabras clave temas de la historia ("magic", "time travel", "zombie") con
+// adjetivos de tono ("amused", "hopeful"), lugares y épocas ("washington dc", "1980s") y datos de
+// producción ("sequel", "based on novel or book"). Para decir que dos títulos "tratan de lo mismo"
+// solo cuentan los temas.
+const TONE = new Set(`absurd admiring adoring aggressive ambiguous amazed amused angry antagonistic anxious appreciative
+approving assertive audacious awestruck baffled bewildered bold callous candid cautionary celebratory cheerful
+comforting compassionate complex critical cruel curious defiant demeaning depressing derisive desperate
+disdainful disheartening disgusted distressing dramatic earnest embarrassed empathetic enchanted energetic
+enthusiastic euphoric excited exhilarated exuberant factual familiar foreboding frantic frustrated gloomy grim
+harsh hilarious hopeful horrified incredulous informative inquisitive inspirational intense introspective
+ironic joyful joyous lighthearted macabre melancholy mischievous mocking nostalgic ominous optimistic
+outrageous pessimistic philosophical playful powerful pretentious provocative quirky rebellious reflective
+regretful relaxed respectful sad sarcastic satirical scary sentimental serious shocking silly sincere skeptical
+sneering somber straightforward suspenseful suspicious sympathetic tender tense thoughtful thrilling tragic
+unassuming urgent vibrant whimsical wistful witty zany`.split(/\s+/));
+const TONE_PHRASES = new Set(['matter of fact', 'mean spirited', 'tearjerker', 'feel good', 'mind bending']);
+const META_PREFIXES = ['based on ', 'remake', 'reboot', 'sequel', 'prequel', 'spin off', 'spin-off', 'live action remake'];
+const META = new Set(['duringcreditsstinger', 'aftercreditsstinger', 'woman director', 'anime', 'independent film',
+  'short film', '3d animation', 'cgi', 'cgi animation', 'stop motion', 'anthology', 'miniseries', 'black and white',
+  'silent film', 'sitcom', 'mockumentary', 'documentary', 'animation', 'adult animation', 'live action and animation',
+  'shounen', 'shoujo', 'seinen', 'josei', 'manga', 'light novel', 'web novel', 'gay theme', 'lgbt']);
+const PLACE_WORDS = /\b(city|state|county|province|island|islands|republic|kingdom|america|europe|asia|africa|usa|u\.s\.a\.|england|london|paris|tokyo|new york|los angeles|chicago|washington|california|texas|florida|mexico|japan|korea|china|france|germany|italy|spain|russia|canada|australia|brazil|india|ireland|scotland|las vegas|san francisco|boston|miami|seoul|hong kong|berlin|rome|moscow)\b/;
+
+export function classifyKeyword(name: string): KeywordKind {
+  const n = name.trim().toLowerCase();
+  if (!n) return 'meta';
+  if (TONE.has(n) || TONE_PHRASES.has(n)) return 'tone';
+  if (META.has(n) || META_PREFIXES.some(p => n.startsWith(p))) return 'meta';
+  // "paris, france", "1980s", "19th century", "new york city", "small town texas"
+  if (n.includes(', ') || /^\d{3,4}s$/.test(n) || /^\d{1,2}(st|nd|rd|th) century$/.test(n) || PLACE_WORDS.test(n)) return 'place';
+  return 'theme';
+}
+
 export interface Dna {
   type: 'movie' | 'series';
   tmdbId: number;
@@ -25,6 +60,8 @@ export interface Dna {
   language: string | null;
   genres: number[];
   keywords: number[];
+  /** Qué es cada palabra clave: tema de la historia, tono, lugar/época o dato de producción. */
+  keywordKinds: Record<number, KeywordKind>;
   /** Director (cine) o creadores (series). */
   directors: number[];
   /** Hasta 5 actores principales. */
@@ -49,11 +86,14 @@ function franchiseOf(type: string, tmdbId: number, collection: number | null, ke
 }
 
 export async function getDna(type: 'movie' | 'series', tmdbId: number, config: any): Promise<Dna | null> {
-  const result = await cacheWrapGlobal(`recs:dna:v2:${type}:${tmdbId}`, async () => {
+  const result = await cacheWrapGlobal(`recs:dna:v3:${type}:${tmdbId}`, async () => {
     const params = { id: tmdbId, language: 'en-US', append_to_response: 'keywords,credits' };
     const d: any = type === 'movie' ? await moviedb.movieInfo(params, config) : await moviedb.tvInfo(params, config);
     if (!d?.id) return { missing: true };
-    const keywords: number[] = ((d.keywords?.keywords || d.keywords?.results || []) as any[]).map(k => Number(k.id)).filter(Boolean);
+    const rawKeywords: any[] = (d.keywords?.keywords || d.keywords?.results || []) as any[];
+    const keywords: number[] = rawKeywords.map(k => Number(k.id)).filter(Boolean);
+    const keywordKinds: Record<number, KeywordKind> = {};
+    for (const k of rawKeywords) if (k?.id) keywordKinds[Number(k.id)] = classifyKeyword(String(k.name || ''));
     const genres: number[] = (d.genres || []).map((g: any) => Number(g.id)).filter(Boolean);
     const directors: number[] = type === 'movie'
       ? (d.credits?.crew || []).filter((c: any) => c.job === 'Director').map((c: any) => Number(c.id))
@@ -72,6 +112,7 @@ export async function getDna(type: 'movie' | 'series', tmdbId: number, config: a
       language,
       genres,
       keywords,
+      keywordKinds,
       directors,
       cast,
       companies,

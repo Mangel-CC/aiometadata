@@ -53,6 +53,8 @@ const SUPERHERO_KEYWORDS = new Set([9715, 9717, 180547, 229266]);
 /** Palabras clave de TMDB que no dicen nada del gusto (verificadas por id): créditos con escena extra,
  *  "basada en libro/manga/manhua", "secuela", "dirigida por mujer", "anime". */
 const STOP_KEYWORDS = new Set([179430, 179431, 818, 9663, 187056, 210024, 13141, 290667]);
+/** Cuánto pesa cada clase de palabra clave en el perfil (ver classifyKeyword en dna.ts). */
+const KEYWORD_KIND_WEIGHT: Record<string, number> = { theme: 1, tone: 0.2, place: 0.3, meta: 0 };
 /** Familias que identifican de qué trata algo (para explicar "Porque viste…"). */
 const SPECIFIC_FAMILIES = new Set(['k', 'd', 'c', 'co', 'at']);
 const KIDS_GENRES = new Set([10751, 10762]);
@@ -65,7 +67,12 @@ const WINDOW = 10;
 function features(d: Dna): Map<string, number> {
   const f = new Map<string, number>();
   for (const g of d.genres) f.set(`g:${g}`, 1);
-  for (const k of d.keywords) if (!STOP_KEYWORDS.has(k)) f.set(`k:${k}`, 1);
+  for (const k of d.keywords) {
+    if (STOP_KEYWORDS.has(k)) continue;
+    const kind = d.keywordKinds?.[k] || 'theme';
+    const weight = KEYWORD_KIND_WEIGHT[kind];
+    if (weight > 0) f.set(`k:${k}`, weight);
+  }
   for (const x of d.directors) f.set(`d:${x}`, 1);
   for (const x of d.cast) f.set(`c:${x}`, 1);
   for (const x of d.companies) f.set(`co:${x}`, 1);
@@ -320,14 +327,23 @@ export async function prepareV2(watched: any[], progress: any[], config: any, op
     const ranked = seedSpecific.filter(({ s }) => compatible(dna, s.dna!) && shareGenre(dna, s.dna!)).map(({ s, f }) => {
       let score = 0;
       let shared = 0;
+      let themes = 0;
       for (const [feat, strength] of mine) {
         const other = f.get(feat);
         if (!other) continue;
         shared++;
         score += Math.min(strength, other) * FAMILY_WEIGHT[family(feat)] * idf(feat);
+        // Un tema de la historia en común: palabra clave de tipo "tema" o etiqueta de AniList.
+        const fam = family(feat);
+        if (fam === 'at') themes++;
+        else if (fam === 'k') {
+          const id = Number(feat.slice(2));
+          if ((dna.keywordKinds?.[id] || 'theme') === 'theme' && (s.dna!.keywordKinds?.[id] || 'theme') === 'theme') themes++;
+        }
       }
-      return { s, score: score * Math.max(0.3, s.weight), shared };
-    }).filter(x => x.shared >= 2).sort((a, b) => b.score - a.score);
+      const sameDirector = dna.directors.some(x => s.dna!.directors.includes(x));
+      return { s, score: score * Math.max(0.3, s.weight), shared, ok: sameDirector || (themes >= 1 && shared >= 2) };
+    }).filter(x => x.ok).sort((a, b) => b.score - a.score);
     if (ranked.length) {
       // El segundo título solo se cita si se parece al menos la mitad que el primero.
       const cited = ranked.slice(0, 2).filter((x, i) => i === 0 || x.score >= ranked[0].score * 0.5);
