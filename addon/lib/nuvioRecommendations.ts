@@ -38,7 +38,8 @@ export interface RecItem {
   /** Títulos vistos que más empujaron esta recomendación ("Porque viste…"). */
   because?: string[];
   /** 'similar': se parece a lo citado; 'alsoLiked': a quienes vieron lo citado también les gustó. */
-  becauseMode?: 'similar' | 'alsoLiked' | null;
+  becauseMode?: 'similar' | 'alsoLiked' | 'genre' | null;
+  tier?: number;
 }
 
 /**
@@ -349,7 +350,7 @@ const STALE_TTL = 7 * 24 * 3600;
  * recalcula en segundo plano (el cálculo del v2 puede tardar la primera vez). Si Nuvio falla, vacías.
  */
 export async function getNuvioRecommendations(target: NuvioTarget, config: any): Promise<{ main: RecItem[]; anime: RecItem[] }> {
-  const key = `nuvio:recs:v16:${target.accountUUID}:${target.profileIndex}:${JSON.stringify(themeCapsFor(config))}`;
+  const key = `nuvio:recs:v18:${target.accountUUID}:${target.profileIndex}:${JSON.stringify(themeCapsFor(config))}`;
   const staleKey = `${key}:stale`;
   const cached = await readGlobalCache(key);
   if (cached && Array.isArray(cached.main)) return cached;

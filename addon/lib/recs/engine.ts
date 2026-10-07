@@ -35,6 +35,15 @@ export interface Weights {
 // Ajustados con la evaluación del 2026-10-06 (ver motor-recomendaciones-v2-evaluacion.md).
 export const DEFAULT_WEIGHTS: Weights = { cf: 0.6, content: 0.8, tmdb: 0.1, quality: 0.6, fresh: 0.8, pop: 0.4, known: 0 };
 
+/** Por debajo de esto, una lista se completa con recomendaciones de nivel 2 y 3. */
+const MIN_LIST = 60;
+/** Cuánto pesan las recomendaciones de cada nivel (las de nivel 1 siempre van arriba). */
+const TIER_FACTOR: Record<number, number> = { 1: 1, 2: 0.6, 3: 0.35 };
+const GENRE_NAMES_ES: Record<number, string> = { 28: 'acción', 12: 'aventura', 16: 'animación', 35: 'comedia', 80: 'crimen',
+  99: 'documental', 18: 'drama', 10751: 'películas familiares', 14: 'fantasía', 36: 'historia', 27: 'terror', 10402: 'música',
+  9648: 'misterio', 10749: 'romance', 878: 'ciencia ficción', 53: 'suspenso', 10752: 'bélicas', 37: 'western',
+  10759: 'acción y aventura', 10765: 'ciencia ficción y fantasía', 10762: 'infantil', 10764: 'reality', 10766: 'telenovelas',
+  10768: 'guerra y política' };
 /** Cuántos candidatos de "Recomendado para ti" se revisan contra las plataformas del país. */
 const AVAILABILITY_CHECKS = 350;
 
@@ -327,9 +336,15 @@ export async function prepareV2(watched: any[], progress: any[], config: any, op
   const seedSpecific = positives
     .filter(s => s.dna)
     .map(s => ({ s, f: new Map([...features(s.dna!)].filter(([f]) => SPECIFIC_FAMILIES.has(family(f)))) }));
-  const explain = (dna: Dna, c: Cand): { because: string[]; becauseMode: 'similar' | 'alsoLiked' | null } => {
+  // Géneros que más pesan en cada perfil (para el nivel 3: "Porque ves mucho de Romance").
+  const topGenres = (prof: Map<string, number>) => [...prof.entries()]
+    .filter(([f, v]) => family(f) === 'g' && v > 0).sort((a, b) => b[1] - a[1]).slice(0, 3)
+    .map(([f]) => Number(f.slice(2)));
+  const favGenres = { main: topGenres(profiles.main.prof), anime: topGenres(profiles.anime.prof) };
+  type Why = { because: string[]; becauseMode: 'similar' | 'alsoLiked' | 'genre' | null; tier: number };
+  const explain = (dna: Dna, c: Cand): Why => {
     const mine = [...features(dna)].filter(([f]) => SPECIFIC_FAMILIES.has(family(f)));
-    const ranked = seedSpecific.filter(({ s }) => compatible(dna, s.dna!) && shareGenre(dna, s.dna!)).map(({ s, f }) => {
+    const ranked = seedSpecific.filter(({ s }) => compatible(dna, s.dna!)).map(({ s, f }) => {
       let score = 0;
       let shared = 0;
       let themes = 0;
@@ -347,12 +362,19 @@ export async function prepareV2(watched: any[], progress: any[], config: any, op
         }
       }
       const sameDirector = dna.directors.some(x => s.dna!.directors.includes(x));
-      return { s, score: score * Math.max(0.3, s.weight), shared, ok: sameDirector || (themes >= 1 && shared >= 2) };
-    }).filter(x => x.ok).sort((a, b) => b.score - a.score);
-    if (ranked.length) {
+      const genre = shareGenre(dna, s.dna!);
+      // Nivel 1: mismo director, o géneros parecidos + un tema + otro rasgo. Nivel 2 (solo si faltan
+      // recomendaciones, ver más abajo): un tema en común, o un género y algún rasgo concreto.
+      const tier = sameDirector || (genre && themes >= 1 && shared >= 2) ? 1
+        : (themes >= 1 || (genre && shared >= 1)) ? 2 : 0;
+      return { s, score: score * Math.max(0.3, s.weight), shared, tier };
+    }).filter(x => x.tier > 0).sort((a, b) => a.tier - b.tier || b.score - a.score);
+    const bestTier = ranked[0]?.tier;
+    if (bestTier === 1) {
+      const strict = ranked.filter(x => x.tier === 1);
       // El segundo título solo se cita si se parece al menos la mitad que el primero.
-      const cited = ranked.slice(0, 2).filter((x, i) => i === 0 || x.score >= ranked[0].score * 0.5);
-      return { because: cited.map(x => x.s.title), becauseMode: 'similar' };
+      const cited = strict.slice(0, 2).filter((x, i) => i === 0 || x.score >= strict[0].score * 0.5);
+      return { because: cited.map(x => x.s.title), becauseMode: 'similar', tier: 1 };
     }
     // Sin parecido concreto, solo vale si la eligen los fans de al menos dos títulos vistos (no de uno).
     const cfSeeds = [...c.seedContrib.entries()].filter(([k, v]) => {
@@ -361,7 +383,17 @@ export async function prepareV2(watched: any[], progress: any[], config: any, op
       return !sd || (compatible(dna, sd) && shareGenre(dna, sd));
     }).sort((x, y) => y[1] - x[1]);
     const top = cfSeeds.slice(0, 2).map(([k]) => seeds.find(x => x.key === k)?.title).filter(Boolean) as string[];
-    return c.cf > 0 && cfSeeds.length >= 2 && top.length ? { because: top, becauseMode: 'alsoLiked' } : { because: [], becauseMode: null };
+    if (c.cf > 0 && cfSeeds.length >= 2 && top.length) return { because: top, becauseMode: 'alsoLiked', tier: 1 };
+    if (bestTier === 2) return { because: [ranked[0].s.title], becauseMode: 'similar', tier: 2 };
+    if (c.cf > 0 && top.length) return { because: top.slice(0, 1), becauseMode: 'alsoLiked', tier: 2 };
+    // Nivel 3: coincide con los géneros que más ve el perfil (mismo público que algo visto).
+    const fav = dna.anime ? favGenres.anime : favGenres.main;
+    const g = genreSet(dna);
+    const hit = fav.find(x => (TV_TO_MOVIE[x] || [x]).some(y => g.has(y)));
+    if (hit && seedSpecific.some(({ s }) => compatible(dna, s.dna!))) {
+      return { because: [GENRE_NAMES_ES[hit] || String(hit)], becauseMode: 'genre', tier: 3 };
+    }
+    return { because: [], becauseMode: null, tier: 0 };
   };
 
   // 6. Componentes de la puntuación (los pesos se aplican en rankV2).
@@ -405,7 +437,7 @@ export async function prepareV2(watched: any[], progress: any[], config: any, op
   // Validez: lo que no se parece a nada visto ni lo eligen los fans de varios títulos vistos no se
   // recomienda, aunque puntúe alto por ser estreno o popular ("Mil maneras de morir porque viste Peppa").
   const before = items.length;
-  for (let i = items.length - 1; i >= 0; i--) if (!items[i].becauseMode) items.splice(i, 1);
+  for (let i = items.length - 1; i >= 0; i--) if (!items[i].tier) items.splice(i, 1);
   logger.info(`v2: ${before - items.length} candidatos descartados por no tener relación con lo visto`);
 
   // Escalas comparables: el colaborativo daba 0.7–1.0 y el contenido 0.05–0.15, así que el primero
@@ -442,6 +474,16 @@ export async function prepareV2(watched: any[], progress: any[], config: any, op
     for (let i = items.length - 1; i >= 0; i--) if (drop.has(items[i])) items.splice(i, 1);
     logger.info(`v2: ${drop.size} sin disponibilidad en ${region} (o fuera de los ${AVAILABILITY_CHECKS} revisados)`);
   }
+  // Niveles: con historial suficiente solo entra el nivel 1. Si una lista queda corta (perfiles con poco
+  // historial, como Axel), se completa con el nivel 2 y, si aún falta, con el 3; en rankV2 van debajo.
+  for (const anime of [false, true]) {
+    const pool = items.filter(it => Boolean(it.dna.anime) === anime);
+    let allowed = 1;
+    while (allowed < 3 && pool.filter(it => it.tier <= allowed).length < MIN_LIST) allowed++;
+    const out = new Set(pool.filter(it => it.tier > allowed));
+    for (let i = items.length - 1; i >= 0; i--) if (out.has(items[i])) items.splice(i, 1);
+    if (allowed > 1) logger.info(`v2: lista ${anime ? 'de anime' : 'principal'} corta; se completa hasta el nivel ${allowed}`);
+  }
   return { items, caps };
 }
 
@@ -452,7 +494,9 @@ export interface Prepared {
     dna: Dna;
     comps: Record<keyof Weights, number>;
     because: string[];
-    becauseMode: 'similar' | 'alsoLiked' | null;
+    becauseMode: 'similar' | 'alsoLiked' | 'genre' | null;
+    /** 1 = relación fuerte; 2 y 3 solo entran cuando la lista queda corta. */
+    tier: number;
     topSeed: string;
     themes: string[];
     /** Para diagnóstico: rasgos del perfil que coincidieron y semillas que más aportaron. */
@@ -476,8 +520,9 @@ export function rankV2(prep: Prepared, weights: Partial<Weights> = {}): { main: 
       ? (Object.keys(w) as Array<keyof Weights>).filter(k => k !== 'known').reduce((sum, k) => sum + w[k] * (it.comps[k] || 0), 0)
       : (w.cf * it.comps.cf + w.content * it.comps.content + w.tmdb * it.comps.tmdb)
         * (1 + w.quality * (it.comps.quality - 0.5) + w.fresh * it.comps.fresh + w.pop * it.comps.pop)
-        * (1 - Math.min(0.9, w.known * it.comps.known)),
-  })).sort((x, y) => y.score - x.score);
+        * (1 - Math.min(0.9, w.known * it.comps.known))
+        * (TIER_FACTOR[it.tier] ?? 1),
+  })).sort((x, y) => (x.tier || 1) - (y.tier || 1) || y.score - x.score); // el nivel 1 siempre arriba
 
   // 7. Variedad.
   const diversify = (pool: Scored[], ignore: string[]): Scored[] => {
@@ -496,7 +541,7 @@ export function rankV2(prep: Prepared, weights: Partial<Weights> = {}): { main: 
     }
     return out;
   };
-  const toItem = (s: Scored): RecItemV2 => ({ tmdbId: s.tmdbId, type: s.type, score: s.score, because: s.because, becauseMode: s.becauseMode, debug: { comps: s.comps, matches: s.matches, seedShares: s.seedShares, title: s.dna.title, franchise: s.dna.franchise } });
+  const toItem = (s: Scored): RecItemV2 => ({ tmdbId: s.tmdbId, type: s.type, score: s.score, because: s.because, becauseMode: s.becauseMode, tier: s.tier, debug: { comps: s.comps, matches: s.matches, seedShares: s.seedShares, title: s.dna.title, franchise: s.dna.franchise } });
   return {
     main: diversify(scored.filter(s => !s.dna.anime), []).map(toItem),
     anime: diversify(scored.filter(s => s.dna.anime), ['animation', 'kids', 'anime']).map(toItem),
