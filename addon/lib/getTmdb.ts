@@ -844,6 +844,23 @@ export async function getTmdbWatchProvidersForRegion(mediaType: string, region: 
   };
 }
 
+/**
+ * ¿Está disponible en alguna plataforma (suscripción, gratis, con anuncios, renta o compra) en ese
+ * país? Para las recomendaciones: lo que no está en México casi nunca tiene fuentes. Cacheado 7 días
+ * ya reducido a un booleano por país pedido.
+ */
+export async function availableInRegion(type: 'movie' | 'series', id: number | string, region: string, config: UserConfig): Promise<boolean | null> {
+  const path = type === 'movie' ? `/movie/${id}/watch/providers` : `/tv/${id}/watch/providers`;
+  const result = await cacheWrapGlobal(`tmdb:available:v1:${region}:${type}:${id}`, async () => {
+    const data = await makeTmdbRequest(path, getApiKey(config), {}, 'GET', null, config);
+    const entry = data?.results?.[region];
+    const kinds = ['flatrate', 'free', 'ads', 'rent', 'buy'];
+    return { available: Boolean(entry && kinds.some(k => Array.isArray(entry[k]) && entry[k].length)) };
+  }, 7 * 24 * 60 * 60).catch(() => null);
+  if (!result || result.error) return null;
+  return Boolean(result.available);
+}
+
 export async function getMovieWatchProviders(params: any, config: UserConfig) {
   const { id, ...queryParams } = params;
   const cacheKey = `tmdb:movie:watch_providers:${id}${getTmdbQueryCacheSuffix(queryParams)}`;
@@ -1177,6 +1194,7 @@ module.exports = {
   getTmdbSeriesLogo,
   getMovieWatchProviders,
   getTvWatchProviders,
+  availableInRegion,
   getTranslations,
   movieReleaseDates,
   tvContentRatings,

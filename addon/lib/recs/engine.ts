@@ -35,7 +35,12 @@ export interface Weights {
 // Ajustados con la evaluación del 2026-10-06 (ver motor-recomendaciones-v2-evaluacion.md).
 export const DEFAULT_WEIGHTS: Weights = { cf: 0.6, content: 0.8, tmdb: 0.1, quality: 0.6, fresh: 0.8, pop: 0.4, known: 0 };
 
+/** Cuántos candidatos de "Recomendado para ti" se revisan contra las plataformas del país. */
+const AVAILABILITY_CHECKS = 350;
+
 export interface V2Options {
+  /** País para exigir disponibilidad en plataformas ("" la desactiva). Por defecto MX. */
+  region?: string;
   weights?: Partial<Weights>;
   themeCaps?: Record<string, number>;
   now?: number;
@@ -417,6 +422,26 @@ export async function prepareV2(watched: any[], progress: any[], config: any, op
     }
   }
   logger.info(`v2: ${positives.length} semillas (${groups.size} franquicias), ${cands.size} candidatos, ${items.length} puntuables`);
+  // Disponibilidad: lo de "Recomendado para ti" tiene que estar en alguna plataforma del país (suscripción,
+  // gratis, anuncios, renta o compra); lo que no está casi nunca tiene fuentes ("Mi querido némesis" para
+  // Faby). Al anime no se le pide: lo traducen y sube aunque no se estrene aquí. Solo se consulta a los
+  // candidatos con posibilidades (los mejores por la puntuación por defecto), con caché de 7 días; si
+  // TMDB no responde, el título se queda.
+  const region = opts.region === undefined ? 'MX' : opts.region;
+  if (region) {
+    const provisional = (it: Prepared['items'][number]) => {
+      const w = DEFAULT_WEIGHTS;
+      return (w.cf * it.comps.cf + w.content * it.comps.content + w.tmdb * it.comps.tmdb)
+        * (1 + w.quality * (it.comps.quality - 0.5) + w.fresh * it.comps.fresh + w.pop * it.comps.pop);
+    };
+    const nonAnime = items.filter(it => !it.dna.anime).sort((a, b) => provisional(b) - provisional(a));
+    const drop = new Set(nonAnime.slice(AVAILABILITY_CHECKS));
+    await mapWithConcurrency(nonAnime.slice(0, AVAILABILITY_CHECKS), 4, async (it) => {
+      if (await moviedb.availableInRegion(it.type, it.tmdbId, region, config) === false) drop.add(it);
+    });
+    for (let i = items.length - 1; i >= 0; i--) if (drop.has(items[i])) items.splice(i, 1);
+    logger.info(`v2: ${drop.size} sin disponibilidad en ${region} (o fuera de los ${AVAILABILITY_CHECKS} revisados)`);
+  }
   return { items, caps };
 }
 
