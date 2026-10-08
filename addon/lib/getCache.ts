@@ -1549,6 +1549,11 @@ async function cacheWrapCatalog(userUUID: string, catalogKey: string, method: ()
 
   // Las recomendaciones de Nuvio son por perfil: sin esto las hijas (que comparten todo lo demas
   // con la principal) recibian la pagina cacheada del perfil 1.
+  // Catalogos de temporada: si cambia como se arman (p.ej. la mezcla de Halloween), subir la version.
+  if (idOnly.startsWith('seasonal.')) {
+    catalogConfig.seasonal = { v: 2 };
+  }
+
   const isNuvioRecommended = idOnly === 'nuvio.recommended' || idOnly === 'nuvio.recommended.anime';
   if (isNuvioRecommended) {
     catalogConfig.nuvio = {

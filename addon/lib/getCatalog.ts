@@ -865,6 +865,9 @@ async function getSeasonalCatalog(type: string, id: string, genre: string, page:
   if (!(def.types || []).includes(type as any)) return [];
   const params = type === 'movie' ? def.query : def.querySeries;
   if (!params) return [];
+  if (type === 'movie' && (def as any).mix) {
+    return getSeasonalMixedCatalog(def, params, page, language, config, userUUID, includeVideos);
+  }
   const virtualId = `tmdb.discover.seasonal_${def.id}`;
   const virtualConfig: any = {
     ...config,
@@ -874,6 +877,59 @@ async function getSeasonalCatalog(type: string, id: string, genre: string, page:
     ],
   };
   return getTmdbAndMdbListCatalog(type, virtualId, genre, page, language, virtualConfig, userUUID, includeVideos);
+}
+
+// Catalogo de temporada "mezclado" (seasonal.json -> mix): Halloween no es solo terror. La lista de
+// TMDB (por popularidad) se separa en "de terror" (genero terror que no es familiar ni animado: El
+// Conjuro, Scream) y "tranquilo" (Coco, El extraño mundo de Jack, y tambien Coraline o Monster House,
+// que TMDB marca como terror pero son para ninos), y se intercala segun mix.pattern (por defecto dos
+// tranquilas por una de terror). Para ver solo terror esta el genero de terror.
+async function getSeasonalMixedCatalog(def: any, params: Record<string, any>, page: number, language: string, config: UserConfig, userUUID: string, includeVideos: boolean): Promise<any[]> {
+  const mix = def.mix || {};
+  const scaryGenres: number[] = mix.scaryGenres || [27];
+  const softGenres: number[] = mix.softenGenres || [10751, 16];
+  const pattern: string[] = mix.pattern || ['calm', 'calm', 'scary'];
+  const pageSize = parseInt(process.env.CATALOG_LIST_ITEMS_SIZE || '20');
+  const listPage = typeof page === 'number' ? page : parseInt(String(page), 10) || 1;
+  const need = listPage * pageSize;
+  const isScary = (r: any) => {
+    const g: number[] = r.genre_ids || [];
+    return g.some(x => scaryGenres.includes(x)) && !g.some(x => softGenres.includes(x));
+  };
+  const calm: any[] = [];
+  const scary: any[] = [];
+  let totalPages = 1;
+  for (let src = 1; src <= Math.min(totalPages, 25); src++) {
+    const data = await cacheWrapGlobal(`seasonal:mix:v1:${def.id}:${src}:${stableStringify(params)}`,
+      () => moviedb.discoverMovie({ ...params, page: src, language: 'en-US' }, config), 12 * 3600).catch(() => null);
+    if (!data || data.error) break;
+    totalPages = Number(data.total_pages) || 1;
+    for (const r of data.results || []) (isScary(r) ? scary : calm).push(r);
+    const calmShare = pattern.filter(x => x === 'calm').length / pattern.length;
+    if (calm.length >= need * calmShare && scary.length >= need * (1 - calmShare)) break;
+  }
+  const mixed: any[] = [];
+  let ci = 0, si = 0;
+  while (mixed.length < need && (ci < calm.length || si < scary.length)) {
+    for (const slot of pattern) {
+      if (mixed.length >= need) break;
+      if (slot === 'scary' && si < scary.length) mixed.push(scary[si++]);
+      else if (ci < calm.length) mixed.push(calm[ci++]);
+      else if (si < scary.length) mixed.push(scary[si++]);
+    }
+  }
+  const pageItems = mixed.slice((listPage - 1) * pageSize, listPage * pageSize);
+  const metas = await Promise.all(pageItems.map(async (r: any) => {
+    const stremioId = `tmdb:${r.id}`;
+    try {
+      const result = await cacheWrapMetaSmart(userUUID, stremioId, async () => getMeta('movie', language, stremioId, config, userUUID, includeVideos),
+        undefined, { enableErrorCaching: true, maxRetries: 2, config }, 'movie' as any, includeVideos);
+      return result?.meta || null;
+    } catch {
+      return null;
+    }
+  }));
+  return metas.filter(Boolean);
 }
 
 // Recomendaciones del perfil de Nuvio: la lista sale de nuvioRecommendations.ts y cada titulo pasa

@@ -18,6 +18,12 @@
       "sort_by": "popularity.desc",
       "vote_count.gte": 50
     },
+    "mix": {
+      "comment": "Peliculas: dos tranquilas por una de terror. De terror = genero terror (27) que no es familiar (10751) ni animado (16).",
+      "pattern": ["calm", "calm", "scary"],
+      "scaryGenres": [27],
+      "softenGenres": [10751, 16]
+    },
     "querySeries": {
       "with_keywords": "3335|209789",
       "sort_by": "popularity.desc",
